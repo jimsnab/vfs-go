@@ -133,7 +133,7 @@ type (
 	}
 )
 
-const kAllocCacheSize = 1e5
+const kAllocCacheSize = 1024
 const kFreeCacheSize = 1024
 const kTransactionAverageSize = 256
 
