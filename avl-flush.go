@@ -23,40 +23,40 @@ func (af *avlTreeS) flush() (err error) {
 	}
 
 	// back up everything
-	if _, err = af.rf.Seek(0, io.SeekEnd); err != nil {
-		af.err = err
-		return
-	}
+	// if _, err = af.rf.Seek(0, io.SeekEnd); err != nil {
+	// 	af.err = err
+	// 	return
+	// }
 
-	for _, node := range af.writtenNodes {
-		if node.originalRaw != nil {
-			if _, err = af.rf.Write(node.originalRaw); err != nil {
-				af.err = err
-				return
-			}
-		}
-	}
+	// for _, node := range af.writtenNodes {
+	// 	if node.originalRaw != nil {
+	// 		if _, err = af.rf.Write(node.originalRaw); err != nil {
+	// 			af.err = err
+	// 			return
+	// 		}
+	// 	}
+	// }
 
-	for _, node := range af.freeNodes {
-		if node.dirty && node.originalRaw != nil {
-			if _, err = af.rf.Write(node.originalRaw); err != nil {
-				af.err = err
-				return
-			}
-		}
-	}
+	// for _, node := range af.freeNodes {
+	// 	if node.dirty && node.originalRaw != nil {
+	// 		if _, err = af.rf.Write(node.originalRaw); err != nil {
+	// 			af.err = err
+	// 			return
+	// 		}
+	// 	}
+	// }
 
-	if af.dirty {
-		if _, err = af.rf.Write(af.originalRaw); err != nil {
-			af.err = err
-			return
-		}
-	}
+	// if af.dirty {
+	// 	if _, err = af.rf.Write(af.originalRaw); err != nil {
+	// 		af.err = err
+	// 		return
+	// 	}
+	// }
 
-	if err = af.rf.Sync(); err != nil {
-		af.err = err
-		return
-	}
+	// if err = af.rf.Sync(); err != nil {
+	// 	af.err = err
+	// 	return
+	// }
 
 	// write all the changes
 	for _, node := range af.writtenNodes {
@@ -88,15 +88,15 @@ func (af *avlTreeS) flush() (err error) {
 	}
 
 	// success - discard recovery data
-	if err = af.rf.Truncate(0); err != nil {
-		af.err = err
-		return
-	}
+	// if err = af.rf.Truncate(0); err != nil {
+	// 	af.err = err
+	// 	return
+	// }
 
-	if err = af.f.Sync(); err != nil {
-		af.err = err
-		return
-	}
+	// if err = af.rf.Sync(); err != nil {
+	// 	af.err = err
+	// 	return
+	// }
 
 	// remove the dirty flags and purge old loaded data
 	af.dirty = false
