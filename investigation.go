@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	mrand "math/rand"
 	"os"
 	"time"
 )
@@ -14,13 +15,13 @@ func Bench(configPath string) {
 		fmt.Println(err)
 		return
 	}
-	var c IndexConfig
+	var c VfsConfig
 	if err = json.Unmarshal(cfg, &c); err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	index, err := NewIndex(&c)
+	st, err := NewStore(&c)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -30,20 +31,13 @@ func Bench(configPath string) {
 	next := time.Now().Add(time.Second)
 	count := 0
 	for {
-		txn, err := index.BeginTransaction()
-		if err != nil {
-			panic(err)
-		}
-
 		key := make([]byte, 20)
 		rand.Read(key)
+		datalen := mrand.Intn(16384) + 1
+		data := make([]byte, datalen)
+		rand.Read(data)
 
-		if err = txn.Set(key, 0, uint64(count)); err != nil {
-			panic(err)
-		}
-
-		err = txn.EndTransaction()
-		if err != nil {
+		if err = st.StoreContent(key, data); err != nil {
 			panic(err)
 		}
 

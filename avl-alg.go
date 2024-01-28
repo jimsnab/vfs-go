@@ -23,7 +23,7 @@ func (tree *avlTreeS) Find(key []byte) (node avlNode) {
 	n := tree.getRoot()
 
 	for {
-		if n == nil || tree.err != nil {
+		if n == nil || tree.err.Load() != nil {
 			return
 		}
 
@@ -322,7 +322,7 @@ func (an *avlNodeS) deleteRotateRight(middle avlNode) (out avlNode, rebalanced b
 func (tree *avlTreeS) IterateByTimestamp(iter AvlIterator) {
 	node := tree.getOldest()
 	for node != nil {
-		if tree.err != nil {
+		if tree.err.Load() != nil {
 			return
 		}
 		next := node.Next() // iterator might delete node
@@ -342,6 +342,10 @@ func (tree *avlTreeS) IterateByKeys(iter AvlIterator) {
 func (an *avlNodeS) iterateNext(iter AvlIterator) bool {
 	if an == nil {
 		return true
+	}
+
+	if an.tree.err.Load() != nil {
+		return false
 	}
 
 	node := avlNode(an)

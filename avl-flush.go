@@ -5,15 +5,15 @@ import (
 )
 
 func (af *avlTreeS) flush() (err error) {
-	if af.err != nil {
-		err = af.err
+	err = af.lastError()
+	if err != nil {
 		return
 	}
 
 	// update the commit file size
 	size, err := af.f.Seek(0, io.SeekEnd)
 	if err != nil {
-		af.err = err
+		af.err.Store(&err)
 		return
 	}
 
@@ -24,14 +24,14 @@ func (af *avlTreeS) flush() (err error) {
 
 	// back up everything
 	// if _, err = af.rf.Seek(0, io.SeekEnd); err != nil {
-	// 	af.err = err
+	// 	af.err.Store(&err)
 	// 	return
 	// }
 
 	// for _, node := range af.writtenNodes {
 	// 	if node.originalRaw != nil {
 	// 		if _, err = af.rf.Write(node.originalRaw); err != nil {
-	// 			af.err = err
+	// 			af.err.Store(&err)
 	// 			return
 	// 		}
 	// 	}
@@ -40,7 +40,7 @@ func (af *avlTreeS) flush() (err error) {
 	// for _, node := range af.freeNodes {
 	// 	if node.dirty && node.originalRaw != nil {
 	// 		if _, err = af.rf.Write(node.originalRaw); err != nil {
-	// 			af.err = err
+	// 			af.err.Store(&err)
 	// 			return
 	// 		}
 	// 	}
@@ -48,20 +48,20 @@ func (af *avlTreeS) flush() (err error) {
 
 	// if af.dirty {
 	// 	if _, err = af.rf.Write(af.originalRaw); err != nil {
-	// 		af.err = err
+	// 		af.err.Store(&err)
 	// 		return
 	// 	}
 	// }
 
 	// if err = af.rf.Sync(); err != nil {
-	// 	af.err = err
+	// 	af.err.Store(&err)
 	// 	return
 	// }
 
 	// write all the changes
 	for _, node := range af.writtenNodes {
 		if err = node.write(); err != nil {
-			af.err = err
+			af.err.Store(&err)
 			return
 		}
 	}
@@ -69,7 +69,7 @@ func (af *avlTreeS) flush() (err error) {
 	for _, node := range af.freeNodes {
 		if node.dirty {
 			if err = node.write(); err != nil {
-				af.err = err
+				af.err.Store(&err)
 				return
 			}
 		}
@@ -77,26 +77,33 @@ func (af *avlTreeS) flush() (err error) {
 
 	if af.dirty {
 		if err = af.write(); err != nil {
-			af.err = err
+			af.err.Store(&err)
 			return
 		}
 	}
 
-	if af.syncEnabled {
+	if af.cfg.SyncTask {
+		go func() {
+			if err = af.f.Sync(); err != nil {
+				af.err.Store(&err)
+				return
+			}
+		}()
+	} else if af.cfg.Sync {
 		if err = af.f.Sync(); err != nil {
-			af.err = err
+			af.err.Store(&err)
 			return
 		}
 	}
 
 	// success - discard recovery data
 	// if err = af.rf.Truncate(0); err != nil {
-	// 	af.err = err
+	// 	af.err.Store(&err)
 	// 	return
 	// }
 
 	// if err = af.rf.Sync(); err != nil {
-	// 	af.err = err
+	// 	af.err.Store(&err)
 	// 	return
 	// }
 

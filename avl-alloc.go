@@ -6,7 +6,7 @@ import (
 )
 
 func (af *avlTreeS) loadFreeNode(offset uint64) *freeNodeS {
-	if af.err != nil {
+	if af.lastError() != nil {
 		return &freeNodeS{}
 	}
 
@@ -15,7 +15,7 @@ func (af *avlTreeS) loadFreeNode(offset uint64) *freeNodeS {
 		var err error
 		fn, err = af.readFreeNode(offset)
 		if err != nil {
-			af.err = err
+			af.err.Store(&err)
 			return &freeNodeS{}
 		}
 
@@ -34,7 +34,7 @@ func (af *avlTreeS) alloc(key []byte, shard, position uint64) (node avlNode) {
 		key:  make([]byte, len(key)),
 	}
 
-	if af.err != nil {
+	if af.lastError() != nil {
 		node = &an
 		return
 	}
@@ -58,7 +58,7 @@ func (af *avlTreeS) alloc(key []byte, shard, position uint64) (node avlNode) {
 		// allocate a new node at the end of the file
 		size, err := af.f.Seek(0, io.SeekEnd)
 		if err != nil {
-			af.err = err
+			af.err.Store(&err)
 			node = &an
 			return
 		}
@@ -105,19 +105,9 @@ func (af *avlTreeS) alloc(key []byte, shard, position uint64) (node avlNode) {
 // Converts an allocated node into a free node.
 func (an *avlNodeS) Free() {
 	af := an.tree
-	if af.err != nil {
+	if af.lastError() != nil {
 		return
 	}
-
-	// removing := an.offset
-	// af.IterateByKeys(func(node avlNode) bool {
-	// 	if offsetOf(node.Parent()) == removing ||
-	// 	 offsetOf(node.Left()) == removing ||
-	// 	 offsetOf(node.Right()) == removing {
-	// 		panic("removing a referenced node")
-	// 	 }
-	// 	 return true
-	// })
 
 	//
 	// Delink from time history and convert to a free node.
@@ -172,7 +162,7 @@ func (af *avlTreeS) loadNode(offset uint64) (node avlNode) {
 		return nil
 	}
 
-	if af.err != nil {
+	if af.lastError() != nil {
 		return af.zeroNode
 	}
 
@@ -182,7 +172,7 @@ func (af *avlTreeS) loadNode(offset uint64) (node avlNode) {
 			var err error
 			an, err = af.readAvlNode(offset)
 			if err != nil {
-				af.err = err
+				af.err.Store(&err)
 				return af.zeroNode
 			}
 			af.nodeCache[offset] = an

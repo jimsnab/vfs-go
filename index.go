@@ -10,11 +10,14 @@ import (
 )
 
 type (
-	IndexConfig struct {
-		DataDir   string `json:"data_dir"`
-		BaseName  string `json:"base_name"`
-		CacheSize int    `json:"cache_size"`
-		Sync      bool   `json:"sync"`
+	VfsConfig struct {
+		IndexDir          string `json:"index_dir"`
+		DataDir           string `json:"data_dir"`
+		BaseName          string `json:"base_name"`
+		CacheSize         int    `json:"cache_size"`
+		Sync              bool   `json:"sync"`
+		SyncTask          bool   `json:"sync_task"`
+		ShardDurationMins int    `json:"shard_duration_mins"`
 	}
 
 	Index interface {
@@ -41,7 +44,7 @@ type (
 		mu   sync.Mutex
 		tree avlTree
 		txn  *avlTransaction
-		cfg  *IndexConfig
+		cfg  *VfsConfig
 	}
 )
 
@@ -49,7 +52,7 @@ var AppFs = afero.NewOsFs()
 
 var ErrTransactionStarted = errors.New("transaction in progress")
 
-func NewIndex(cfg *IndexConfig) (index Index, err error) {
+func NewIndex(cfg *VfsConfig) (index Index, err error) {
 	tree, err := newAvlTree(cfg)
 	if err != nil {
 		return

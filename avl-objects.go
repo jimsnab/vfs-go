@@ -5,6 +5,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
 
 	"github.com/spf13/afero"
 )
@@ -41,7 +42,8 @@ type (
 
 	avlTreeS struct {
 		mu              sync.Mutex
-		err             error
+		cfg             *VfsConfig
+		err             atomic.Pointer[error]
 		f               afero.File
 		rf              afero.File
 		dirty           bool
@@ -51,7 +53,6 @@ type (
 		committedSize   uint64
 		oldestOffset    uint64
 		newestOffset    uint64
-		syncEnabled     bool
 		writtenNodes    []*avlNodeS
 		nodeCache       map[uint64]*avlNodeS
 		allocLru        *lruStack[*avlNodeS]
@@ -138,15 +139,15 @@ const kAllocCacheSize = int(1e5)
 const kFreeCacheSize = 1024
 const kTransactionAverageSize = 256
 
-func newAvlTree(cfg *IndexConfig) (tree avlTree, err error) {
-	filePath := path.Join(cfg.DataDir, fmt.Sprintf("%s.dt1", cfg.BaseName))
+func newAvlTree(cfg *VfsConfig) (tree avlTree, err error) {
+	filePath := path.Join(cfg.IndexDir, fmt.Sprintf("%s.dt1", cfg.BaseName))
 	f, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		err = fmt.Errorf("error opening index file %s: %v", filePath, err)
 		return
 	}
 
-	filePath = path.Join(cfg.DataDir, fmt.Sprintf("%s.dt2", cfg.BaseName))
+	filePath = path.Join(cfg.IndexDir, fmt.Sprintf("%s.dt2", cfg.BaseName))
 	rf, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		f.Close()
@@ -165,7 +166,7 @@ func newAvlTree(cfg *IndexConfig) (tree avlTree, err error) {
 		writtenNodes: make([]*avlNodeS, 0, kTransactionAverageSize),
 		nodeCache:    make(map[uint64]*avlNodeS, acs),
 		freeNodes:    make(map[uint64]*freeNodeS, kFreeCacheSize),
-		syncEnabled:  cfg.Sync,
+		cfg:          cfg,
 	}
 	af.allocLru = newLruStack[*avlNodeS](kAllocCacheSize, af.collectNode)
 	af.freeLru = newLruStack[*freeNodeS](kFreeCacheSize, af.collectFreeNode)
@@ -197,8 +198,8 @@ func newAvlTree(cfg *IndexConfig) (tree avlTree, err error) {
 func (af *avlTreeS) Close() {
 	af.f.Close()
 	af.rf.Close()
-	if af.err == nil {
-		af.err = os.ErrClosed
+	if af.lastError() == nil {
+		af.err.Store(&os.ErrClosed)
 	}
 }
 
@@ -339,8 +340,8 @@ func (an *avlNodeS) Timestamp() int64 {
 
 func (af *avlTreeS) lock() error {
 	af.mu.Lock()
-	if af.err != nil {
-		err := af.err
+	err := af.lastError()
+	if err != nil {
 		af.mu.Unlock()
 		return err
 	}
@@ -353,7 +354,11 @@ func (af *avlTreeS) unlock() {
 }
 
 func (af *avlTreeS) lastError() error {
-	return af.err
+	perr := af.err.Load()
+	if perr != nil {
+		return *perr
+	}
+	return nil
 }
 
 func (af *avlTreeS) getRoot() avlNode {
@@ -467,7 +472,7 @@ func (fn *freeNodeS) Offset() uint64 {
 }
 
 func (fn *freeNodeS) Next() freeNode {
-	if fn.tree.err != nil {
+	if fn.tree.err.Load() != nil {
 		return &freeNodeS{}
 	}
 
