@@ -51,6 +51,7 @@ type (
 		committedSize   uint64
 		oldestOffset    uint64
 		newestOffset    uint64
+		syncEnabled     bool
 		writtenNodes    []*avlNodeS
 		nodeCache       map[uint64]*avlNodeS
 		allocLru        *lruStack[*avlNodeS]
@@ -133,19 +134,19 @@ type (
 	}
 )
 
-const kAllocCacheSize = 1e5
+const kAllocCacheSize = int(1e5)
 const kFreeCacheSize = 1024
 const kTransactionAverageSize = 256
 
-func newAvlTree(dirPath, baseName string) (tree avlTree, err error) {
-	filePath := path.Join(dirPath, fmt.Sprintf("%s.dt1", baseName))
+func newAvlTree(cfg *IndexConfig) (tree avlTree, err error) {
+	filePath := path.Join(cfg.DataDir, fmt.Sprintf("%s.dt1", cfg.BaseName))
 	f, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		err = fmt.Errorf("error opening index file %s: %v", filePath, err)
 		return
 	}
 
-	filePath = path.Join(dirPath, fmt.Sprintf("%s.dt2", baseName))
+	filePath = path.Join(cfg.DataDir, fmt.Sprintf("%s.dt2", cfg.BaseName))
 	rf, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		f.Close()
@@ -153,12 +154,18 @@ func newAvlTree(dirPath, baseName string) (tree avlTree, err error) {
 		return
 	}
 
+	acs := kAllocCacheSize
+	if cfg.CacheSize != 0 {
+		acs = cfg.CacheSize
+	}
+
 	af := avlTreeS{
 		f:            f,
 		rf:           rf,
 		writtenNodes: make([]*avlNodeS, 0, kTransactionAverageSize),
-		nodeCache:    make(map[uint64]*avlNodeS, kAllocCacheSize),
+		nodeCache:    make(map[uint64]*avlNodeS, acs),
 		freeNodes:    make(map[uint64]*freeNodeS, kFreeCacheSize),
+		syncEnabled:  cfg.Sync,
 	}
 	af.allocLru = newLruStack[*avlNodeS](kAllocCacheSize, af.collectNode)
 	af.freeLru = newLruStack[*freeNodeS](kFreeCacheSize, af.collectFreeNode)

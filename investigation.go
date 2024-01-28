@@ -2,12 +2,25 @@ package vfs
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 )
 
-func Bench(dirPath, baseName string) {
-	index, err := NewIndex(dirPath, baseName)
+func Bench(configPath string) {
+	cfg, err := os.ReadFile(configPath)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	var c IndexConfig
+	if err = json.Unmarshal(cfg, &c); err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	index, err := NewIndex(&c)
 	if err != nil {
 		fmt.Println(err)
 		return

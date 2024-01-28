@@ -10,6 +10,13 @@ import (
 )
 
 type (
+	IndexConfig struct {
+		DataDir   string `json:"data_dir"`
+		BaseName  string `json:"base_name"`
+		CacheSize int    `json:"cache_size"`
+		Sync      bool   `json:"sync"`
+	}
+
 	Index interface {
 		// Starts a transaction for getting or setting index values. Only one
 		// transaction can be active at a time.
@@ -34,6 +41,7 @@ type (
 		mu   sync.Mutex
 		tree avlTree
 		txn  *avlTransaction
+		cfg  *IndexConfig
 	}
 )
 
@@ -41,14 +49,15 @@ var AppFs = afero.NewOsFs()
 
 var ErrTransactionStarted = errors.New("transaction in progress")
 
-func NewIndex(dirPath, baseName string) (index Index, err error) {
-	tree, err := newAvlTree(dirPath, baseName)
+func NewIndex(cfg *IndexConfig) (index Index, err error) {
+	tree, err := newAvlTree(cfg)
 	if err != nil {
 		return
 	}
 
 	index = &avlIndex{
 		tree: tree,
+		cfg:  cfg,
 	}
 	return
 }

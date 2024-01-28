@@ -32,7 +32,7 @@ func benchmarkInitialize(b *testing.B) (ts *testState) {
 func TestIndexWrites(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	index, err := NewIndex(ts.testDir, "index")
+	index, err := NewIndex(&IndexConfig{DataDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestIndexWrites(t *testing.T) {
 func TestIndexWrites2(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	index1, err := NewIndex(ts.testDir, "index")
+	index1, err := NewIndex(&IndexConfig{DataDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestIndexWrites2(t *testing.T) {
 
 	index1.Close()
 
-	index2, err := NewIndex(ts.testDir, "index")
+	index2, err := NewIndex(&IndexConfig{DataDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestIndexWrites2(t *testing.T) {
 func BenchmarkIndex(b *testing.B) {
 	ts := benchmarkInitialize(b)
 
-	index1, err := NewIndex(ts.testDir, "index")
+	index1, err := NewIndex(&IndexConfig{DataDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func BenchmarkIndex(b *testing.B) {
 func TestIndexDiscardSome(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	index1, err := NewIndex(ts.testDir, "index")
+	index1, err := NewIndex(&IndexConfig{DataDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestIndexDiscardSome(t *testing.T) {
 	index1.Check()
 	index1.Close()
 
-	index2, err := NewIndex(ts.testDir, "index")
+	index2, err := NewIndex(&IndexConfig{DataDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestIndexDiscardSome(t *testing.T) {
 
 	index2.Close()
 
-	index3, err := NewIndex(ts.testDir, "index")
+	index3, err := NewIndex(&IndexConfig{DataDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}

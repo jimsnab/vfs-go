@@ -82,9 +82,11 @@ func (af *avlTreeS) flush() (err error) {
 		}
 	}
 
-	if err = af.f.Sync(); err != nil {
-		af.err = err
-		return
+	if af.syncEnabled {
+		if err = af.f.Sync(); err != nil {
+			af.err = err
+			return
+		}
 	}
 
 	// success - discard recovery data
