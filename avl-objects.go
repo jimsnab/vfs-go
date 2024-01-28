@@ -62,6 +62,8 @@ type (
 		freeCount       uint64
 		zeroNode        *avlNodeS
 		printValues     bool
+		dt1sync         sync.WaitGroup
+		dt2sync         sync.WaitGroup
 	}
 
 	avlNode interface {

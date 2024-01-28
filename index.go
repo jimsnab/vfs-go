@@ -18,6 +18,7 @@ type (
 		Sync              bool   `json:"sync"`
 		SyncTask          bool   `json:"sync_task"`
 		ShardDurationMins int    `json:"shard_duration_mins"`
+		RecoveryEnabled   bool   `json:"recovery_enabled"`
 	}
 
 	Index interface {
