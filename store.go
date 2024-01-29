@@ -40,7 +40,7 @@ type (
 		index    Index
 		shards   map[uint64]afero.File
 		accessed map[uint64]time.Time
-		cfg      *VfsConfig
+		cfg      VfsConfig
 	}
 )
 
@@ -50,12 +50,24 @@ func NewStore(cfg *VfsConfig) (st Store, err error) {
 		return
 	}
 
-	st = &store{
+	s := &store{
 		index:    index,
-		cfg:      cfg,
+		cfg:      *cfg,
 		shards:   map[uint64]afero.File{},
 		accessed: map[uint64]time.Time{},
 	}
+
+	if s.cfg.ShardDurationDays == 0 {
+		s.cfg.ShardDurationDays = 1
+	}
+	if s.cfg.ShardRetentionDays == 0 {
+		s.cfg.ShardRetentionDays = 7
+	}
+	if s.cfg.CacheSize == 0 {
+		s.cfg.CacheSize = 1024
+	}
+
+	st = s
 	return
 }
 
