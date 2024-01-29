@@ -250,7 +250,7 @@ func TestIndexDiscardSome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = index2.PurgeOlder(start)
+	err = index2.RemoveBefore(start)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,13 +17,21 @@ import (
 
 type (
 	Store interface {
+		// Saves a batch of records. Existing records with the same key are replaced.
 		StoreContent(records []StoreRecord) (err error)
+
+		// Retrieve a specific record
 		RetrieveContent(key []byte) (content []byte, err error)
+
+		// Discard all records that fall out of the retention period specified in the config.
+		PurgeOld() (err error)
+
+		// Close I/O.
 		Close()
 	}
 
 	StoreRecord struct {
-		key []byte
+		key     []byte
 		content []byte
 	}
 
@@ -49,10 +59,20 @@ func NewStore(cfg *VfsConfig) (st Store, err error) {
 	return
 }
 
+func (st *store) calcShard(when time.Time) uint64 {
+	shard := uint64(when.Unix())
+	shard = shard / uint64(24*60*60*st.cfg.ShardDurationDays)
+	return shard
+}
+
+func (st *store) timeFromShard(shard uint64) time.Time {
+	secs := shard * uint64(24*60*60*st.cfg.ShardDurationDays)
+	return time.Unix(int64(secs), 0)
+}
+
 func (st *store) openShard(request uint64) (f afero.File, shard uint64, err error) {
 	if request == 0 {
-		shard = uint64(time.Now().UTC().Unix())
-		shard = shard / (60 * uint64(st.cfg.ShardDurationMins))
+		shard = st.calcShard(time.Now().UTC())
 	} else {
 		shard = request
 	}
@@ -86,6 +106,48 @@ func (st *store) openShard(request uint64) (f afero.File, shard uint64, err erro
 	return
 }
 
+func (st *store) purgeShards(cutoff time.Time) (err error) {
+	files, err := afero.ReadDir(AppFs, st.cfg.DataDir)
+	if err != nil {
+		return
+	}
+
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+
+		fileName := file.Name()
+		if !strings.HasPrefix(fileName, st.cfg.BaseName+".") {
+			continue
+		}
+
+		afterBase := fileName[len(st.cfg.BaseName)+1:]
+		cutPoint := strings.Index(afterBase, ".")
+		if cutPoint <= 0 {
+			continue
+		}
+
+		if afterBase[cutPoint:] != ".dt3" {
+			continue
+		}
+
+		shard, terr := strconv.ParseUint(afterBase[:cutPoint], 10, 64)
+		if terr != nil {
+			continue
+		}
+
+		ts := st.timeFromShard(shard)
+		if ts.Before(cutoff) {
+			if err = AppFs.Remove(path.Join(st.cfg.DataDir, fileName)); err != nil {
+				return
+			}
+		}
+	}
+
+	return
+}
+
 func (st *store) StoreContent(records []StoreRecord) (err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -105,7 +167,7 @@ func (st *store) StoreContent(records []StoreRecord) (err error) {
 		return
 	}
 
-	for _,record := range records {
+	for _, record := range records {
 		sizedContent := make([]byte, len(record.content)+4)
 		binary.BigEndian.PutUint32(sizedContent[0:4], uint32(len(record.content)))
 		copy(sizedContent[4:], record.content)
@@ -201,6 +263,19 @@ func (st *store) RetrieveContent(key []byte) (content []byte, err error) {
 	}
 
 	return
+}
+
+func (st *store) PurgeOld() (err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	cutoff := time.Now().UTC().Add(-(time.Duration(time.Hour * 24 * time.Duration(st.cfg.ShardRetentionDays))))
+
+	if err = st.index.RemoveBefore(cutoff); err != nil {
+		return
+	}
+
+	return st.purgeShards(cutoff)
 }
 
 func (st *store) Close() {

@@ -11,14 +11,15 @@ import (
 
 type (
 	VfsConfig struct {
-		IndexDir          string `json:"index_dir"`
-		DataDir           string `json:"data_dir"`
-		BaseName          string `json:"base_name"`
-		CacheSize         int    `json:"cache_size"`
-		Sync              bool   `json:"sync"`
-		SyncTask          bool   `json:"sync_task"`
-		ShardDurationMins int    `json:"shard_duration_mins"`
-		RecoveryEnabled   bool   `json:"recovery_enabled"`
+		IndexDir           string  `json:"index_dir"`
+		DataDir            string  `json:"data_dir"`
+		BaseName           string  `json:"base_name"`
+		CacheSize          int     `json:"cache_size"`
+		Sync               bool    `json:"sync"`
+		SyncTask           bool    `json:"sync_task"`
+		ShardDurationDays  float64 `json:"shard_duration_days"`
+		ShardRetentionDays float64 `json:"shard_retention_days"`
+		RecoveryEnabled    bool    `json:"recovery_enabled"`
 	}
 
 	Index interface {
@@ -27,7 +28,7 @@ type (
 		BeginTransaction() (txn IndexTransaction, err error)
 
 		// Removes all of the index nodes with a timestamp older than start.
-		PurgeOlder(start time.Time) (err error)
+		RemoveBefore(start time.Time) (err error)
 
 		// Closes the file resources of the index.
 		Close()
@@ -93,7 +94,7 @@ func (ai *avlIndex) BeginTransaction() (txn IndexTransaction, err error) {
 	return
 }
 
-func (ai *avlIndex) PurgeOlder(cutoff time.Time) (err error) {
+func (ai *avlIndex) RemoveBefore(cutoff time.Time) (err error) {
 	ai.mu.Lock()
 	defer ai.mu.Unlock()
 

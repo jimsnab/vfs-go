@@ -32,7 +32,7 @@ func Bench(configPath string) {
 	count := 0
 	for {
 		records := make([]StoreRecord, 0, 128)
-		for i := 0 ; i < 128 ; i++ {
+		for i := 0; i < 128; i++ {
 			key := make([]byte, 20)
 			rand.Read(key)
 			datalen := mrand.Intn(16384) + 1
@@ -51,6 +51,10 @@ func Bench(configPath string) {
 			delta := time.Since(start)
 			fmt.Printf("%d  %d/s\n", count, count/int(delta.Seconds()))
 			next = time.Now().Add(time.Second)
+
+			if err = st.RemoveBefore(time.Now().UTC().Add(-time.Minute * 5)); err != nil {
+				panic(err)
+			}
 		}
 	}
 }
