@@ -1,6 +1,8 @@
 package vfs
 
 import (
+	"bufio"
+	"encoding/binary"
 	"io"
 )
 
@@ -23,6 +25,7 @@ func (af *avlTreeS) flush() (err error) {
 	}
 
 	// back up everything
+	hasBackup := false
 	if af.cfg.RecoveryEnabled {
 
 		// ensure the last recovery file change completed
@@ -33,34 +36,46 @@ func (af *avlTreeS) flush() (err error) {
 			return
 		}
 
+		w := bufio.NewWriter(af.rf)
+
 		for _, node := range af.writtenNodes {
 			if node.originalRaw != nil {
-				if _, err = af.rf.Write(node.originalRaw); err != nil {
+				if err = af.backUp(w, node.offset, node.originalRaw); err != nil {
 					af.err.Store(&err)
 					return
 				}
+				hasBackup = true
 			}
 		}
 
 		for _, node := range af.freeNodes {
 			if node.dirty && node.originalRaw != nil {
-				if _, err = af.rf.Write(node.originalRaw); err != nil {
+				if err = af.backUp(w, node.offset, node.originalRaw); err != nil {
 					af.err.Store(&err)
 					return
 				}
+				hasBackup = true
 			}
 		}
 
 		if af.dirty {
-			if _, err = af.rf.Write(af.originalRaw); err != nil {
+			if err = af.backUp(w, 0, af.originalRaw); err != nil {
 				af.err.Store(&err)
 				return
 			}
+			hasBackup = true
 		}
 
-		if err = af.rf.Sync(); err != nil {
-			af.err.Store(&err)
-			return
+		if hasBackup {
+			if err = w.Flush(); err != nil {
+				af.err.Store(&err)
+				return
+			}
+
+			if err = af.rf.Sync(); err != nil {
+				af.err.Store(&err)
+				return
+			}
 		}
 	}
 
@@ -108,7 +123,7 @@ func (af *avlTreeS) flush() (err error) {
 	}
 
 	// success - discard recovery data
-	if af.cfg.RecoveryEnabled {
+	if hasBackup {
 		if err = af.rf.Truncate(0); err != nil {
 			af.err.Store(&err)
 			return
@@ -138,5 +153,27 @@ func (af *avlTreeS) flush() (err error) {
 
 	af.allocLru.Collect()
 	af.freeLru.Collect()
+	return
+}
+
+func (af *avlTreeS) backUp(w *bufio.Writer, offset uint64, content []byte) (err error) {
+	o := [8]byte{}
+	binary.BigEndian.PutUint64(o[:], offset)
+	n, err := w.Write(o[:])
+	if err != nil {
+		return
+	}
+	if n != 8 {
+		panic("short write")
+	}
+
+	n, err = w.Write(content)
+	if err != nil {
+		return
+	}
+	if n != len(content) {
+		panic("short write")
+	}
+
 	return
 }

@@ -11,6 +11,11 @@ func (af *avlTreeS) recover() (err error) {
 	f := af.f
 	rf := af.rf
 
+	fileSize, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return
+	}
+
 	if _, err = rf.Seek(0, io.SeekStart); err != nil {
 		return
 	}
@@ -35,6 +40,15 @@ func (af *avlTreeS) recover() (err error) {
 		}
 
 		offset := binary.BigEndian.Uint64(raw[:8])
+		if offset > uint64(fileSize) {
+			err = fmt.Errorf("recovery record offset beyond index file size: %d", offset)
+			return
+		}
+		if (offset % kRecordSize) != 0 {
+			err = errors.New("recovery record offset is not aligned")
+			return
+		}
+
 		if _, recovered := writes[offset]; recovered {
 			// don't overwrite the oldest backup
 			continue
