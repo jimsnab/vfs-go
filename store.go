@@ -15,9 +15,14 @@ import (
 
 type (
 	Store interface {
-		StoreContent(key, content []byte) (err error)
+		StoreContent(records []StoreRecord) (err error)
 		RetrieveContent(key []byte) (content []byte, err error)
 		Close()
+	}
+
+	StoreRecord struct {
+		key []byte
+		content []byte
 	}
 
 	store struct {
@@ -81,7 +86,7 @@ func (st *store) openShard(request uint64) (f afero.File, shard uint64, err erro
 	return
 }
 
-func (st *store) StoreContent(key, content []byte) (err error) {
+func (st *store) StoreContent(records []StoreRecord) (err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -95,27 +100,30 @@ func (st *store) StoreContent(key, content []byte) (err error) {
 		return
 	}
 
-	sizedContent := make([]byte, len(content)+4)
-	binary.BigEndian.PutUint32(sizedContent[0:4], uint32(len(content)))
-	copy(sizedContent[4:], content)
-
-	n, err := f.Write(sizedContent)
-	if err != nil {
-		return
-	}
-
-	if n < len(sizedContent) {
-		err = errors.New("unable to write all data") // should be unreachable
-		return
-	}
-
 	txn, err := st.index.BeginTransaction()
 	if err != nil {
 		return
 	}
 
-	if txn.Set(key, shard, uint64(offset)); err != nil {
-		return
+	for _,record := range records {
+		sizedContent := make([]byte, len(record.content)+4)
+		binary.BigEndian.PutUint32(sizedContent[0:4], uint32(len(record.content)))
+		copy(sizedContent[4:], record.content)
+
+		var n int
+		n, err = f.Write(sizedContent)
+		if err != nil {
+			return
+		}
+
+		if n < len(sizedContent) {
+			err = errors.New("unable to write all data") // should be unreachable
+			return
+		}
+
+		if txn.Set(record.key, shard, uint64(offset)); err != nil {
+			return
+		}
 	}
 
 	if err = txn.EndTransaction(); err != nil {

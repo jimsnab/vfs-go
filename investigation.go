@@ -31,17 +31,21 @@ func Bench(configPath string) {
 	next := time.Now().Add(time.Second)
 	count := 0
 	for {
-		key := make([]byte, 20)
-		rand.Read(key)
-		datalen := mrand.Intn(16384) + 1
-		data := make([]byte, datalen)
-		rand.Read(data)
+		records := make([]StoreRecord, 0, 128)
+		for i := 0 ; i < 128 ; i++ {
+			key := make([]byte, 20)
+			rand.Read(key)
+			datalen := mrand.Intn(16384) + 1
+			data := make([]byte, datalen)
+			rand.Read(data)
 
-		if err = st.StoreContent(key, data); err != nil {
-			panic(err)
+			records = append(records, StoreRecord{key, data})
+			count++
 		}
 
-		count++
+		if err = st.StoreContent(records); err != nil {
+			panic(err)
+		}
 
 		if time.Now().After(next) {
 			delta := time.Since(start)
