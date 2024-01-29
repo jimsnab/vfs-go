@@ -33,6 +33,8 @@ type (
 		Newest          uint64
 		NodeCount       uint64
 		FreeCount       uint64
+		SetCount        uint64
+		DeleteCount     uint64
 		Unused          [kRecordSize - kHeaderSize]byte // sized to match diskAvlNode
 	}
 
@@ -46,7 +48,7 @@ type (
 )
 
 // size of diskAvlNode (the biggest disk record)
-const kHeaderSize = (8 * 8)
+const kHeaderSize = (8 * 10)
 const kRecordSize = 1 + 1 + 20 + (8 * 8)
 
 const (
@@ -102,6 +104,8 @@ func (af *avlTreeS) readAvlHeader() (err error) {
 	af.newestOffset = hdr.Newest
 	af.nodeCount = hdr.NodeCount
 	af.freeCount = hdr.FreeCount
+	af.setCount = hdr.SetCount
+	af.deleteCount = hdr.DeleteCount
 
 	totalRecords := 1 + af.nodeCount + af.freeCount
 	totalSize := totalRecords * kRecordSize
@@ -123,6 +127,8 @@ func (af *avlTreeS) write() (err error) {
 		Newest:          af.newestOffset,
 		NodeCount:       af.nodeCount,
 		FreeCount:       af.freeCount,
+		SetCount:        af.setCount,
+		DeleteCount:     af.deleteCount,
 	}
 
 	if _, err = af.f.Seek(0, io.SeekStart); err != nil {

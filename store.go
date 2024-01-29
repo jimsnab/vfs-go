@@ -36,11 +36,13 @@ type (
 	}
 
 	store struct {
-		mu       sync.Mutex
-		index    Index
-		shards   map[uint64]afero.File
-		accessed map[uint64]time.Time
-		cfg      VfsConfig
+		mu           sync.Mutex
+		index        Index
+		shards       map[uint64]afero.File
+		accessed     map[uint64]time.Time
+		cfg          VfsConfig
+		filesRemoved int
+		keysRemoved  uint64
 	}
 )
 
@@ -72,14 +74,18 @@ func NewStore(cfg *VfsConfig) (st Store, err error) {
 }
 
 func (st *store) calcShard(when time.Time) uint64 {
-	shard := uint64(when.Unix())
-	shard = shard / uint64(24*60*60*st.cfg.ShardDurationDays)
+	divisor := uint64(24 * 60 * 60 * 1000 * st.cfg.ShardDurationDays)
+	if divisor < 1 {
+		divisor = 1
+	}
+	shard := uint64(when.UnixMilli())
+	shard = shard / divisor
 	return shard
 }
 
 func (st *store) timeFromShard(shard uint64) time.Time {
-	secs := shard * uint64(24*60*60*st.cfg.ShardDurationDays)
-	return time.Unix(int64(secs), 0)
+	ms := int64(shard) * int64(24*60*60*1000*st.cfg.ShardDurationDays)
+	return time.Unix(int64(ms/1000), (ms%1000)*1000*1000)
 }
 
 func (st *store) openShard(request uint64) (f afero.File, shard uint64, err error) {
@@ -154,6 +160,8 @@ func (st *store) purgeShards(cutoff time.Time) (err error) {
 			if err = AppFs.Remove(path.Join(st.cfg.DataDir, fileName)); err != nil {
 				return
 			}
+
+			st.filesRemoved++
 		}
 	}
 
@@ -169,11 +177,6 @@ func (st *store) StoreContent(records []StoreRecord) (err error) {
 		return
 	}
 
-	offset, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		return
-	}
-
 	txn, err := st.index.BeginTransaction()
 	if err != nil {
 		return
@@ -183,6 +186,11 @@ func (st *store) StoreContent(records []StoreRecord) (err error) {
 		sizedContent := make([]byte, len(record.content)+4)
 		binary.BigEndian.PutUint32(sizedContent[0:4], uint32(len(record.content)))
 		copy(sizedContent[4:], record.content)
+
+		var offset int64
+		if offset, err = f.Seek(0, io.SeekEnd); err != nil {
+			return
+		}
 
 		var n int
 		n, err = f.Write(sizedContent)
@@ -283,9 +291,16 @@ func (st *store) PurgeOld() (err error) {
 
 	cutoff := time.Now().UTC().Add(-(time.Duration(time.Hour * 24 * time.Duration(st.cfg.ShardRetentionDays))))
 
+	// reach into impl for testing stats
+	ai := st.index.(*avlIndex)
+	before := ai.tree.Stats()
+
 	if err = st.index.RemoveBefore(cutoff); err != nil {
 		return
 	}
+
+	after := ai.tree.Stats()
+	st.keysRemoved += after.Deletes - before.Deletes
 
 	return st.purgeShards(cutoff)
 }

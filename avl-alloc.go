@@ -24,7 +24,6 @@ func (af *avlTreeS) loadFreeNode(offset uint64) *freeNodeS {
 		panic("reclaiming a free node that was already reclaimed")
 	}
 
-	fn.touch()
 	return fn
 }
 
@@ -53,7 +52,7 @@ func (af *avlTreeS) alloc(key []byte, shard, position uint64) (node avlNode) {
 
 		af.freeNodes[offset] = nil
 		af.freeCount--
-		af.freeLru.Remove(reclaimed.lru)
+		reclaimed.dirty = false
 	} else {
 		// allocate a new node at the end of the file
 		size, err := af.f.Seek(0, io.SeekEnd)
@@ -147,10 +146,10 @@ func (an *avlNodeS) Free() {
 	}
 	af.freeCount++
 	af.freeNodes[fn.offset] = fn
-	fn.lru = af.freeLru.Add(fn)
 
 	af.nodeCount--
 	af.nodeCache[an.offset] = nil
+	an.dirty = false
 	af.allocLru.Remove(an.lru)
 
 	af.firstFreeOffset = fn.offset
@@ -181,7 +180,10 @@ func (af *avlTreeS) loadNode(offset uint64) (node avlNode) {
 			panic("load of a node that was deleted")
 		} else if an.lru == nil {
 			panic("ejected from lru but still in nodeCache")
+		} else if an.lru.discarded {
+			panic("ejected from lru but still holding reference")
 		}
+
 		node = an
 		node.touch()
 	}

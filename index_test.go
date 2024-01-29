@@ -263,9 +263,111 @@ func TestIndexDiscardSome(t *testing.T) {
 	}
 
 	expected := -1
+	deletes := 0
 	for i := 0; i < count; i++ {
 		buf := ids[i]
 		txn, err := index3.BeginTransaction()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		found, shard, position, err := txn.Get(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !found {
+			if expected >= 0 {
+				t.Error("expected to find", expected)
+			}
+		} else {
+			if expected >= 0 {
+				expected++
+				if expected != int(position) {
+					t.Fatal("expected position match")
+				}
+			} else {
+				expected = int(position)
+				deletes = count - i
+			}
+			if shard != ts.shard {
+				t.Fatal("not shard")
+			}
+		}
+
+		err = txn.EndTransaction()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ai := index3.(*avlIndex)
+	stats := ai.tree.Stats()
+	if stats.Deletes != uint64(deletes) {
+		t.Error("wrong delete count")
+	}
+	if stats.Sets != uint64(count) {
+		t.Error("wrong set count")
+	}
+
+	index3.Close()
+}
+
+func TestIndexDiscardShortLru(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	cfg := VfsConfig{
+		IndexDir: ts.testDir,
+		BaseName: "index",
+	}
+
+	index1, err := NewIndex(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := 15000
+
+	ids := make([][]byte, 0, count)
+
+	for i := 0; i < count; i++ {
+		buf := make([]byte, 20)
+		_, err := rand.Read(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, buf)
+
+		txn, err := index1.BeginTransaction()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = txn.Set(buf, ts.shard, uint64(i))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = txn.EndTransaction()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		index1.RemoveBefore(time.Now().UTC().Add(-time.Millisecond * 10))
+	}
+
+	index1.Check()
+	index1.Close()
+
+	index2, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := -1
+	for i := 0; i < count; i++ {
+		buf := ids[i]
+		txn, err := index2.BeginTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -299,5 +401,97 @@ func TestIndexDiscardSome(t *testing.T) {
 		}
 	}
 
-	index3.Close()
+	index2.Close()
+}
+
+func TestIndexDiscardShortLruManySets(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	cfg := VfsConfig{
+		IndexDir:  ts.testDir,
+		BaseName:  "index",
+		CacheSize: 256,
+	}
+
+	index1, err := NewIndex(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count := 5000
+
+	ids := make([][]byte, 0, count)
+
+	for i := 0; i < count; i++ {
+		txn, err := index1.BeginTransaction()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for j := 0; j < 128; j++ {
+			buf := make([]byte, 20)
+			if _, err = rand.Read(buf); err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, buf)
+
+			err = txn.Set(buf, ts.shard, uint64(i))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		err = txn.EndTransaction()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		index1.RemoveBefore(time.Now().UTC().Add(-time.Millisecond * 10))
+	}
+
+	index1.Close()
+
+	index2, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := -1
+	for i := 0; i < count; i++ {
+		buf := ids[i]
+		txn, err := index2.BeginTransaction()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		found, shard, position, err := txn.Get(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if !found {
+			if expected >= 0 {
+				t.Error("expected to find", expected)
+			}
+		} else {
+			if expected >= 0 {
+				expected++
+				if expected != int(position) {
+					t.Fatal("expected position match")
+				}
+			} else {
+				expected = int(position)
+			}
+			if shard != ts.shard {
+				t.Fatal("not shard")
+			}
+		}
+
+		err = txn.EndTransaction()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	index2.Close()
 }

@@ -2,7 +2,6 @@ package vfs
 
 import (
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -118,7 +117,11 @@ func (ai *avlIndex) RemoveBefore(cutoff time.Time) (err error) {
 			return false
 		}
 
-		ai.tree.Delete(node.Key())
+		// delete invalidates node
+		if !ai.tree.Delete(node.Key()) {
+			panic("didn't find node in the tree")
+		}
+
 		deletions++
 		if deletions == 1000 {
 			// flush every 1000 removals
@@ -133,19 +136,7 @@ func (ai *avlIndex) RemoveBefore(cutoff time.Time) (err error) {
 }
 
 func (ai *avlIndex) Check() {
-	count1 := 0
-	ai.tree.IterateByKeys(func(node avlNode) bool {
-		count1++
-		return true
-	})
-
-	count2 := 0
-	ai.tree.IterateByTimestamp(func(node avlNode) bool {
-		count2++
-		return true
-	})
-	if count1 != count2 {
-		fmt.Printf("key count %d different than timestamp count %d\n", count1, count2)
+	if !ai.tree.isValid() {
 		panic("check failure")
 	}
 }

@@ -19,6 +19,7 @@ type (
 		IterateByTimestamp(iter AvlIterator)
 		NodeCount() uint64
 		FreeCount() uint64
+		Stats() avlTreeStats
 		Close()
 
 		lock() error
@@ -58,12 +59,15 @@ type (
 		allocLru        *lruStack[*avlNodeS]
 		nodeCount       uint64
 		freeNodes       map[uint64]*freeNodeS
-		freeLru         *lruStack[*freeNodeS]
 		freeCount       uint64
+		setCount        uint64
+		deleteCount     uint64
 		zeroNode        *avlNodeS
 		printValues     bool
 		dt1sync         sync.WaitGroup
 		dt2sync         sync.WaitGroup
+		nextByTime      uint64
+		keyIteration    bool
 	}
 
 	avlNode interface {
@@ -129,11 +133,15 @@ type (
 	freeNodeS struct {
 		tree        *avlTreeS
 		dirty       bool
-		lru         *lruStackElement[*freeNodeS]
 		originalRaw []byte
 		offset      uint64
 		next        freeNode
 		nextOffset  uint64
+	}
+
+	avlTreeStats struct {
+		Sets    uint64
+		Deletes uint64
 	}
 )
 
@@ -170,8 +178,7 @@ func newAvlTree(cfg *VfsConfig) (tree avlTree, err error) {
 		freeNodes:    make(map[uint64]*freeNodeS, kFreeCacheSize),
 		cfg:          cfg,
 	}
-	af.allocLru = newLruStack[*avlNodeS](kAllocCacheSize, af.collectNode)
-	af.freeLru = newLruStack[*freeNodeS](kFreeCacheSize, af.collectFreeNode)
+	af.allocLru = newLruStack[*avlNodeS](acs, af.collectNode)
 	af.zeroNode = &avlNodeS{tree: &af}
 
 	err = func() (err error) {
@@ -207,16 +214,10 @@ func (af *avlTreeS) Close() {
 
 func (af *avlTreeS) collectNode(an *avlNodeS) bool {
 	if !an.dirty {
-		delete(af.nodeCache, an.offset)
-		return true
-	}
-
-	return false
-}
-
-func (af *avlTreeS) collectFreeNode(fn *freeNodeS) bool {
-	if !fn.dirty {
-		delete(af.nodeCache, fn.offset)
+		p := af.nodeCache[an.offset]
+		if p != nil {
+			delete(af.nodeCache, an.offset)
+		}
 		return true
 	}
 
@@ -229,6 +230,13 @@ func (af *avlTreeS) NodeCount() uint64 {
 
 func (af *avlTreeS) FreeCount() uint64 {
 	return af.freeCount
+}
+
+func (af *avlTreeS) Stats() avlTreeStats {
+	return avlTreeStats{
+		Sets:    af.setCount,
+		Deletes: af.deleteCount,
+	}
 }
 
 func (an *avlNodeS) nodeDirty() {
@@ -492,8 +500,4 @@ func (fn *freeNodeS) SetNext(next freeNode) {
 	fn.dirty = true
 	fn.next = next
 	fn.nextOffset = next.Offset()
-}
-
-func (fn *freeNodeS) touch() {
-	fn.tree.freeLru.Promote(fn.lru)
 }

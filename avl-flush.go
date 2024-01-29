@@ -154,7 +154,6 @@ func (af *avlTreeS) flush() (err error) {
 	}
 
 	af.allocLru.Collect()
-	af.freeLru.Collect()
 	return
 }
 

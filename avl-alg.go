@@ -53,12 +53,16 @@ func (tree *avlTreeS) Set(key []byte, shard, position uint64) (node avlNode, add
 
 	root, _ := op.insertNode(nil, tree.getRoot())
 	tree.setRoot(root)
+	tree.setCount++
 
 	return op.leaf, op.added
 }
 
 // removes a key from the AVL tree, returing true if the key was found and deleted
 func (tree *avlTreeS) Delete(key []byte) bool {
+	if tree.keyIteration {
+		panic("delete is not permitted during iteration by keys")
+	}
 	op := &avlOperation{
 		tree: tree,
 		key:  key,
@@ -69,10 +73,7 @@ func (tree *avlTreeS) Delete(key []byte) bool {
 	if op.leaf != nil {
 		tree.setRoot(root)
 		op.leaf.Free()
-
-		if !tree.checkTimestampLinks() {
-			panic("timestamp link failure")
-		}
+		tree.deleteCount++
 		return true
 	}
 
@@ -137,6 +138,10 @@ func (op *avlOperation) deleteNode(node avlNode) (out avlNode, rebalanced bool) 
 	cmp := bytes.Compare(node.Key(), op.key)
 
 	if cmp == 0 {
+		if node.Offset() == op.tree.nextByTime {
+			op.tree.nextByTime = node.Next().Offset()
+		}
+
 		op.leaf = node
 		if node.Left() == nil {
 			out = node.Right()
@@ -160,6 +165,9 @@ func (op *avlOperation) deleteNode(node avlNode) (out avlNode, rebalanced bool) 
 		node.SwapTimestamp(replacement)
 
 		// key to delete now becomes the replacement - the original one further down in the tree
+		if op.tree.nextByTime == node.Offset() {
+			op.tree.nextByTime = replacement.Offset() // delete during iteration - fix up next pointer
+		}
 		copy(op.key, replacement.Key())
 		cmp = bytes.Compare(node.Key(), op.key)
 	}
@@ -329,18 +337,22 @@ func (tree *avlTreeS) IterateByTimestamp(iter AvlIterator) {
 		if tree.err.Load() != nil {
 			return
 		}
-		next := node.Next() // iterator might delete node
+		tree.nextByTime = offsetOf(node.Next())
 		if !iter(node) {
 			break
 		}
 
-		node = next
+		node = tree.loadNode(tree.nextByTime)
 	}
+
+	tree.nextByTime = 0
 }
 
 // iterates the AVL tree in sorted order
 func (tree *avlTreeS) IterateByKeys(iter AvlIterator) {
+	tree.keyIteration = true
 	tree.getRoot().iterateNext(iter)
+	tree.keyIteration = false
 }
 
 func (an *avlNodeS) iterateNext(iter AvlIterator) bool {
