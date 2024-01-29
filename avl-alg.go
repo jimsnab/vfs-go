@@ -69,6 +69,10 @@ func (tree *avlTreeS) Delete(key []byte) bool {
 	if op.leaf != nil {
 		tree.setRoot(root)
 		op.leaf.Free()
+
+		if !tree.checkTimestampLinks() {
+			panic("timestamp link failure")
+		}
 		return true
 	}
 
