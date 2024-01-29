@@ -52,7 +52,7 @@ func Bench(configPath string) {
 			fmt.Printf("%d  %d/s\n", count, count/int(delta.Seconds()))
 			next = time.Now().Add(time.Second)
 
-			if err = st.RemoveBefore(time.Now().UTC().Add(-time.Minute * 5)); err != nil {
+			if err = st.PurgeOld(); err != nil {
 				panic(err)
 			}
 		}
