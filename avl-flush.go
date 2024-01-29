@@ -49,7 +49,7 @@ func (af *avlTreeS) flush() (err error) {
 		}
 
 		for _, node := range af.freeNodes {
-			if node.dirty && node.originalRaw != nil {
+			if node != nil && node.dirty && node.originalRaw != nil {
 				if err = af.backUp(w, node.offset, node.originalRaw); err != nil {
 					af.err.Store(&err)
 					return
@@ -91,7 +91,7 @@ func (af *avlTreeS) flush() (err error) {
 	}
 
 	for _, node := range af.freeNodes {
-		if node.dirty {
+		if node != nil && node.dirty {
 			if err = node.write(); err != nil {
 				af.err.Store(&err)
 				return
@@ -148,7 +148,9 @@ func (af *avlTreeS) flush() (err error) {
 	af.writtenNodes = af.writtenNodes[:0]
 
 	for _, node := range af.freeNodes {
-		node.dirty = false
+		if node != nil {
+			node.dirty = false
+		}
 	}
 
 	af.allocLru.Collect()
