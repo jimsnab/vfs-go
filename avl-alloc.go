@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func (af *avlTreeS) loadFreeNode(offset uint64) *freeNodeS {
+func (af *avlTree) loadFreeNode(offset uint64) *freeNodeS {
 	if af.lastError() != nil {
 		return &freeNodeS{}
 	}
@@ -27,8 +27,8 @@ func (af *avlTreeS) loadFreeNode(offset uint64) *freeNodeS {
 	return fn
 }
 
-func (af *avlTreeS) alloc(key []byte, shard, position uint64) (node avlNode) {
-	an := avlNodeS{
+func (af *avlTree) alloc(key []byte, shard, position uint64) (node *avlNode) {
+	an := avlNode{
 		tree: af,
 		key:  make([]byte, len(key)),
 	}
@@ -102,7 +102,7 @@ func (af *avlTreeS) alloc(key []byte, shard, position uint64) (node avlNode) {
 }
 
 // Converts an allocated node into a free node.
-func (an *avlNodeS) Free() {
+func (an *avlNode) Free() {
 	af := an.tree
 	if af.lastError() != nil {
 		return
@@ -156,7 +156,7 @@ func (an *avlNodeS) Free() {
 	af.dirty = true
 }
 
-func (af *avlTreeS) loadNode(offset uint64) (node avlNode) {
+func (af *avlTree) loadNode(offset uint64) (node *avlNode) {
 	if af == nil {
 		return nil
 	}

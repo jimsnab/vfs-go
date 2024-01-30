@@ -7,7 +7,7 @@ import (
 	"io"
 )
 
-func (af *avlTreeS) recover() (err error) {
+func (af *avlTree) recover() (err error) {
 	f := af.f
 	rf := af.rf
 

@@ -26,6 +26,9 @@ type (
 		// Discard all records that fall out of the retention period specified in the config.
 		PurgeOld() (err error)
 
+		// Store metrics
+		Stats() StoreStats
+
 		// Close I/O.
 		Close()
 	}
@@ -35,9 +38,16 @@ type (
 		Content []byte
 	}
 
+	StoreStats struct {
+		Sets        uint64
+		Deletes     uint64
+		Keys        uint64
+		KeysRemoved uint64
+	}
+
 	store struct {
 		mu           sync.Mutex
-		index        Index
+		ai           *avlIndex
 		shards       map[uint64]afero.File
 		accessed     map[uint64]time.Time
 		cfg          VfsConfig
@@ -47,13 +57,13 @@ type (
 )
 
 func NewStore(cfg *VfsConfig) (st Store, err error) {
-	index, err := NewIndex(cfg)
+	ai, err := newIndex(cfg)
 	if err != nil {
 		return
 	}
 
 	s := &store{
-		index:    index,
+		ai:       ai,
 		cfg:      *cfg,
 		shards:   map[uint64]afero.File{},
 		accessed: map[uint64]time.Time{},
@@ -177,7 +187,7 @@ func (st *store) StoreContent(records []StoreRecord) (err error) {
 		return
 	}
 
-	txn, err := st.index.BeginTransaction()
+	txn, err := st.ai.BeginTransaction()
 	if err != nil {
 		return
 	}
@@ -231,7 +241,7 @@ func (st *store) RetrieveContent(key []byte) (content []byte, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	txn, err := st.index.BeginTransaction()
+	txn, err := st.ai.BeginTransaction()
 	if err != nil {
 		return
 	}
@@ -291,25 +301,37 @@ func (st *store) PurgeOld() (err error) {
 
 	cutoff := time.Now().UTC().Add(-(time.Duration(time.Hour * 24 * time.Duration(st.cfg.ShardRetentionDays))))
 
-	// reach into impl for testing stats
-	ai := st.index.(*avlIndex)
-	before := ai.tree.Stats()
+	before := st.ai.tree.Stats()
 
-	if err = st.index.RemoveBefore(cutoff); err != nil {
+	if err = st.ai.RemoveBefore(cutoff); err != nil {
 		return
 	}
 
-	after := ai.tree.Stats()
+	after := st.ai.tree.Stats()
 	st.keysRemoved += after.Deletes - before.Deletes
 
 	return st.purgeShards(cutoff)
+}
+
+func (st *store) Stats() StoreStats {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	indexStats := st.ai.Stats()
+
+	return StoreStats{
+		Sets:        indexStats.Sets,
+		Deletes:     indexStats.Deletes,
+		Keys:        st.ai.tree.NodeCount(),
+		KeysRemoved: st.keysRemoved,
+	}
 }
 
 func (st *store) Close() {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	st.index.Close()
+	st.ai.Close()
 	for _, f := range st.shards {
 		f.Close()
 	}

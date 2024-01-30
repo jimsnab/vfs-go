@@ -11,37 +11,9 @@ import (
 )
 
 type (
-	avlTree interface {
-		Find(key []byte) avlNode
-		Set(key []byte, shard, position uint64) (node avlNode, added bool)
-		Delete(key []byte) (deleted bool)
-		IterateByKeys(iter AvlIterator)
-		IterateByTimestamp(iter AvlIterator)
-		NodeCount() uint64
-		FreeCount() uint64
-		Stats() avlTreeStats
-		Close()
+	AvlIterator func(node *avlNode) bool
 
-		lock() error
-		unlock()
-		lastError() error
-		flush() error
-		getRoot() avlNode
-		setRoot(root avlNode)
-		setOldest(node avlNode)
-		getOldest() avlNode
-		setNewest(node avlNode)
-		getNewest() avlNode
-		isValid() bool
-
-		countEach() int
-		printTree(header string)
-		printTreeValues(enable bool)
-	}
-
-	AvlIterator func(node avlNode) bool
-
-	avlTreeS struct {
+	avlTree struct {
 		mu              sync.Mutex
 		cfg             *VfsConfig
 		err             atomic.Pointer[error]
@@ -54,15 +26,15 @@ type (
 		committedSize   uint64
 		oldestOffset    uint64
 		newestOffset    uint64
-		writtenNodes    []*avlNodeS
-		nodeCache       map[uint64]*avlNodeS
-		allocLru        *lruStack[*avlNodeS]
+		writtenNodes    []*avlNode
+		nodeCache       map[uint64]*avlNode
+		allocLru        *lruStack[*avlNode]
 		nodeCount       uint64
 		freeNodes       map[uint64]*freeNodeS
 		freeCount       uint64
 		setCount        uint64
 		deleteCount     uint64
-		zeroNode        *avlNodeS
+		zeroNode        *avlNode
 		printValues     bool
 		dt1sync         sync.WaitGroup
 		dt2sync         sync.WaitGroup
@@ -70,47 +42,12 @@ type (
 		keyIteration    bool
 	}
 
-	avlNode interface {
-		Offset() uint64
-		Left() avlNode
-		SetLeft(parent avlNode)
-		Right() avlNode
-		SetRight(parent avlNode)
-		Parent() avlNode
-		SetParent(parent avlNode)
-		Key() []byte
-		Shard() uint64
-		Position() uint64
-		SetValues(shard, position uint64)
-		Balance() int
-		SetBalance(balance int)
-		AddBalance(delta int)
-		Timestamp() int64
-		SetTimestamp(int64)
-		Prev() avlNode
-		SetPrev(prev avlNode)
-		Next() avlNode
-		SetNext(prev avlNode)
-		Free()
-		CopyKeyAndValues(other avlNode)
-		SwapTimestamp(other avlNode)
-
-		adjustBalance(second avlNode, third avlNode, direction int)
-		rotateLeft(middle avlNode) avlNode
-		rotateRight(middle avlNode) avlNode
-		deleteRotateLeft(middle avlNode) (out avlNode, rebalanced bool)
-		deleteRotateRight(middle avlNode) (out avlNode, rebalanced bool)
-		iterateNext(iter AvlIterator) bool
-		touch()
-		dump(prefix string)
-	}
-
-	avlNodeS struct {
-		tree         *avlTreeS
+	avlNode struct {
+		tree         *avlTree
 		offset       uint64
 		dirty        bool
 		originalRaw  []byte
-		lru          *lruStackElement[*avlNodeS]
+		lru          *lruStackElement[*avlNode]
 		balance      int
 		key          []byte
 		shard        uint64
@@ -123,19 +60,12 @@ type (
 		nextOffset   uint64
 	}
 
-	freeNode interface {
-		Offset() uint64
-		Next() freeNode
-		NextOffset() uint64
-		SetNext(next freeNode)
-	}
-
 	freeNodeS struct {
-		tree        *avlTreeS
+		tree        *avlTree
 		dirty       bool
 		originalRaw []byte
 		offset      uint64
-		next        freeNode
+		next        *freeNodeS
 		nextOffset  uint64
 	}
 
@@ -149,7 +79,7 @@ const kAllocCacheSize = int(1e5)
 const kFreeCacheSize = 1024
 const kTransactionAverageSize = 256
 
-func newAvlTree(cfg *VfsConfig) (tree avlTree, err error) {
+func newAvlTree(cfg *VfsConfig) (tree *avlTree, err error) {
 	filePath := path.Join(cfg.IndexDir, fmt.Sprintf("%s.dt1", cfg.BaseName))
 	f, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
@@ -170,16 +100,16 @@ func newAvlTree(cfg *VfsConfig) (tree avlTree, err error) {
 		acs = cfg.CacheSize
 	}
 
-	af := avlTreeS{
+	af := avlTree{
 		f:            f,
 		rf:           rf,
-		writtenNodes: make([]*avlNodeS, 0, kTransactionAverageSize),
-		nodeCache:    make(map[uint64]*avlNodeS, acs),
+		writtenNodes: make([]*avlNode, 0, kTransactionAverageSize),
+		nodeCache:    make(map[uint64]*avlNode, acs),
 		freeNodes:    make(map[uint64]*freeNodeS, kFreeCacheSize),
 		cfg:          cfg,
 	}
-	af.allocLru = newLruStack[*avlNodeS](acs, af.collectNode)
-	af.zeroNode = &avlNodeS{tree: &af}
+	af.allocLru = newLruStack[*avlNode](acs, af.collectNode)
+	af.zeroNode = &avlNode{tree: &af}
 
 	err = func() (err error) {
 		// recover from interrupted operations
@@ -204,7 +134,7 @@ func newAvlTree(cfg *VfsConfig) (tree avlTree, err error) {
 	return
 }
 
-func (af *avlTreeS) Close() {
+func (af *avlTree) Close() {
 	af.f.Close()
 	af.rf.Close()
 	if af.lastError() == nil {
@@ -212,7 +142,7 @@ func (af *avlTreeS) Close() {
 	}
 }
 
-func (af *avlTreeS) collectNode(an *avlNodeS) bool {
+func (af *avlTree) collectNode(an *avlNode) bool {
 	if !an.dirty {
 		p := af.nodeCache[an.offset]
 		if p != nil {
@@ -224,73 +154,73 @@ func (af *avlTreeS) collectNode(an *avlNodeS) bool {
 	return false
 }
 
-func (af *avlTreeS) NodeCount() uint64 {
+func (af *avlTree) NodeCount() uint64 {
 	return af.nodeCount
 }
 
-func (af *avlTreeS) FreeCount() uint64 {
+func (af *avlTree) FreeCount() uint64 {
 	return af.freeCount
 }
 
-func (af *avlTreeS) Stats() avlTreeStats {
+func (af *avlTree) Stats() avlTreeStats {
 	return avlTreeStats{
 		Sets:    af.setCount,
 		Deletes: af.deleteCount,
 	}
 }
 
-func (an *avlNodeS) nodeDirty() {
+func (an *avlNode) nodeDirty() {
 	if !an.dirty {
 		an.dirty = true
 		an.tree.writtenNodes = append(an.tree.writtenNodes, an)
 	}
 }
 
-func (an *avlNodeS) Balance() int {
+func (an *avlNode) Balance() int {
 	return an.balance
 }
 
-func (an *avlNodeS) SetBalance(balance int) {
+func (an *avlNode) SetBalance(balance int) {
 	an.nodeDirty()
 	an.balance = balance
 }
 
-func (an *avlNodeS) AddBalance(delta int) {
+func (an *avlNode) AddBalance(delta int) {
 	an.nodeDirty()
 	an.balance += delta
 }
 
-func (an *avlNodeS) Key() []byte {
+func (an *avlNode) Key() []byte {
 	return an.key
 }
 
-func (an *avlNodeS) Shard() uint64 {
+func (an *avlNode) Shard() uint64 {
 	return an.shard
 }
 
-func (an *avlNodeS) Position() uint64 {
+func (an *avlNode) Position() uint64 {
 	return an.position
 }
 
-func (an *avlNodeS) SetValues(shard, position uint64) {
+func (an *avlNode) SetValues(shard, position uint64) {
 	an.nodeDirty()
 	an.shard = shard
 	an.position = position
 }
 
-func (an *avlNodeS) CopyKeyAndValues(bn avlNode) {
+func (an *avlNode) CopyKeyAndValues(bn *avlNode) {
 	an.nodeDirty()
 	copy(an.key, bn.Key())
 	an.shard = bn.Shard()
 	an.position = bn.Position()
 }
 
-func (an *avlNodeS) SetTimestamp(ts int64) {
+func (an *avlNode) SetTimestamp(ts int64) {
 	an.nodeDirty()
 	an.timestamp = ts
 }
 
-func (an *avlNodeS) SwapTimestamp(bn avlNode) {
+func (an *avlNode) SwapTimestamp(bn *avlNode) {
 	ts := an.timestamp
 	an.nodeDirty()
 	an.timestamp = bn.Timestamp()
@@ -344,11 +274,11 @@ func (an *avlNodeS) SwapTimestamp(bn avlNode) {
 	}
 }
 
-func (an *avlNodeS) Timestamp() int64 {
+func (an *avlNode) Timestamp() int64 {
 	return an.timestamp
 }
 
-func (af *avlTreeS) lock() error {
+func (af *avlTree) lock() error {
 	af.mu.Lock()
 	err := af.lastError()
 	if err != nil {
@@ -359,11 +289,11 @@ func (af *avlTreeS) lock() error {
 	return nil
 }
 
-func (af *avlTreeS) unlock() {
+func (af *avlTree) unlock() {
 	af.mu.Unlock()
 }
 
-func (af *avlTreeS) lastError() error {
+func (af *avlTree) lastError() error {
 	perr := af.err.Load()
 	if perr != nil {
 		return *perr
@@ -371,49 +301,49 @@ func (af *avlTreeS) lastError() error {
 	return nil
 }
 
-func (af *avlTreeS) getRoot() avlNode {
+func (af *avlTree) getRoot() *avlNode {
 	return af.loadNode(af.rootOffset)
 }
 
-func (af *avlTreeS) setRoot(root avlNode) {
+func (af *avlTree) setRoot(root *avlNode) {
 	af.dirty = true
 	af.rootOffset = offsetOf(root)
 }
 
-func (af *avlTreeS) getOldest() avlNode {
+func (af *avlTree) getOldest() *avlNode {
 	return af.loadNode(af.oldestOffset)
 }
-func (af *avlTreeS) setOldest(node avlNode) {
+func (af *avlTree) setOldest(node *avlNode) {
 	af.dirty = true
 	af.oldestOffset = offsetOf(node)
 }
 
-func (af *avlTreeS) getNewest() avlNode {
+func (af *avlTree) getNewest() *avlNode {
 	return af.loadNode(af.newestOffset)
 }
 
-func (af *avlTreeS) setNewest(node avlNode) {
+func (af *avlTree) setNewest(node *avlNode) {
 	af.dirty = true
 	af.newestOffset = offsetOf(node)
 }
 
-func (an *avlNodeS) Offset() uint64 {
+func (an *avlNode) Offset() uint64 {
 	return an.offset
 }
 
-func (an *avlNodeS) Left() avlNode {
+func (an *avlNode) Left() *avlNode {
 	if an == nil {
 		return nil
 	}
 	return an.tree.loadNode(an.leftOffset)
 }
 
-func (an *avlNodeS) SetLeft(left avlNode) {
+func (an *avlNode) SetLeft(left *avlNode) {
 	an.nodeDirty()
 	an.leftOffset = offsetOf(left)
 }
 
-func (an *avlNodeS) Right() avlNode {
+func (an *avlNode) Right() *avlNode {
 	if an == nil {
 		return nil
 	}
@@ -421,56 +351,56 @@ func (an *avlNodeS) Right() avlNode {
 	return an.tree.loadNode(an.rightOffset)
 }
 
-func (an *avlNodeS) SetRight(right avlNode) {
+func (an *avlNode) SetRight(right *avlNode) {
 	an.nodeDirty()
 	an.rightOffset = offsetOf(right)
 }
 
-func (an *avlNodeS) Parent() avlNode {
+func (an *avlNode) Parent() *avlNode {
 	if an == nil {
 		return nil
 	}
 	return an.tree.loadNode(an.parentOffset)
 }
 
-func (an *avlNodeS) SetParent(parent avlNode) {
+func (an *avlNode) SetParent(parent *avlNode) {
 	an.nodeDirty()
 	an.parentOffset = offsetOf(parent)
 }
 
-func (an *avlNodeS) Next() avlNode {
+func (an *avlNode) Next() *avlNode {
 	if an == nil {
 		return nil
 	}
 	return an.tree.loadNode(an.nextOffset)
 }
 
-func (an *avlNodeS) SetNext(next avlNode) {
+func (an *avlNode) SetNext(next *avlNode) {
 	an.nodeDirty()
 	an.nextOffset = offsetOf(next)
 }
 
-func (an *avlNodeS) Prev() avlNode {
+func (an *avlNode) Prev() *avlNode {
 	if an == nil {
 		return nil
 	}
 	return an.tree.loadNode(an.prevOffset)
 }
 
-func (an *avlNodeS) SetPrev(prev avlNode) {
+func (an *avlNode) SetPrev(prev *avlNode) {
 	an.nodeDirty()
 	an.prevOffset = offsetOf(prev)
 }
 
-func (an *avlNodeS) touch() {
+func (an *avlNode) touch() {
 	an.tree.allocLru.Promote(an.lru)
 }
 
-func (an *avlNodeS) dump(prefix string) {
+func (an *avlNode) dump(prefix string) {
 	fmt.Printf("%s: %d parent=%d left=%d right=%d\n", prefix, an.timestamp, an.parentOffset, an.leftOffset, an.rightOffset)
 }
 
-func offsetOf(node avlNode) uint64 {
+func offsetOf(node *avlNode) uint64 {
 	if node == nil {
 		return 0
 	}
@@ -481,7 +411,7 @@ func (fn *freeNodeS) Offset() uint64 {
 	return fn.offset
 }
 
-func (fn *freeNodeS) Next() freeNode {
+func (fn *freeNodeS) Next() *freeNodeS {
 	if fn.tree.err.Load() != nil {
 		return &freeNodeS{}
 	}
@@ -496,7 +426,7 @@ func (fn *freeNodeS) NextOffset() uint64 {
 	return fn.nextOffset
 }
 
-func (fn *freeNodeS) SetNext(next freeNode) {
+func (fn *freeNodeS) SetNext(next *freeNodeS) {
 	fn.dirty = true
 	fn.next = next
 	fn.nextOffset = next.Offset()

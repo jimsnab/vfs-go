@@ -57,7 +57,7 @@ const (
 	rtRecoveryNode
 )
 
-func (af *avlTreeS) readAvlHeader() (err error) {
+func (af *avlTree) readAvlHeader() (err error) {
 	raw := make([]byte, kRecordSize)
 	n, terr := af.f.ReadAt(raw, 0)
 	if terr != nil {
@@ -117,7 +117,7 @@ func (af *avlTreeS) readAvlHeader() (err error) {
 	return
 }
 
-func (af *avlTreeS) write() (err error) {
+func (af *avlTree) write() (err error) {
 	hdr := diskHeader{
 		Version:         1,
 		FirstFreeOffset: af.firstFreeOffset,
@@ -138,7 +138,7 @@ func (af *avlTreeS) write() (err error) {
 	return binary.Write(af.f, binary.BigEndian, &hdr)
 }
 
-func (af *avlTreeS) readAvlNode(offset uint64) (an *avlNodeS, err error) {
+func (af *avlTree) readAvlNode(offset uint64) (an *avlNode, err error) {
 	raw := make([]byte, kRecordSize)
 	n, err := af.f.ReadAt(raw, int64(offset))
 	if err != nil {
@@ -161,7 +161,7 @@ func (af *avlTreeS) readAvlNode(offset uint64) (an *avlNodeS, err error) {
 		return
 	}
 
-	an = &avlNodeS{
+	an = &avlNode{
 		tree:         af,
 		offset:       offset,
 		originalRaw:  raw,
@@ -179,7 +179,7 @@ func (af *avlTreeS) readAvlNode(offset uint64) (an *avlNodeS, err error) {
 	return
 }
 
-func (an *avlNodeS) write() (err error) {
+func (an *avlNode) write() (err error) {
 	node := diskAvlNode{
 		Rt:        rtAvlNode,
 		Balance:   int8(an.balance),
@@ -201,7 +201,7 @@ func (an *avlNodeS) write() (err error) {
 	return binary.Write(an.tree.f, binary.BigEndian, &node)
 }
 
-func (af *avlTreeS) readFreeNode(offset uint64) (fn *freeNodeS, err error) {
+func (af *avlTree) readFreeNode(offset uint64) (fn *freeNodeS, err error) {
 	raw := make([]byte, kRecordSize)
 	n, err := af.f.ReadAt(raw, int64(offset))
 	if err != nil {

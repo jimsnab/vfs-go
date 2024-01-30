@@ -13,7 +13,7 @@ import (
 type (
 	testState struct {
 		originalFs afero.Fs
-		tree       avlTree
+		tree       *avlTree
 		shard      uint64
 		position   uint64
 		testDir    string
@@ -36,6 +36,9 @@ func testInitialize(t *testing.T, makeAvlTree bool) (ts *testState) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() {
+			ts.tree.Close()
+		})
 	}
 
 	ts.shard = rand.Uint64()
@@ -54,7 +57,7 @@ func testKey(n float64) []byte {
 	return key
 }
 
-func testGetKey(node avlNode) float64 {
+func testGetKey(node *avlNode) float64 {
 	u := binary.BigEndian.Uint64(node.Key()[:8])
 	return math.Float64frombits(u)
 }

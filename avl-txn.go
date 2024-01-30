@@ -3,7 +3,7 @@ package vfs
 type (
 	avlTransaction struct {
 		ai   *avlIndex
-		tree avlTree
+		tree *avlTree
 	}
 )
 

@@ -157,7 +157,7 @@ func TestStoreAndGet1000(t *testing.T) {
 
 func TestStoreAndGetMany(t *testing.T) {
 	ts := testInitialize(t, false)
-	count := 4000
+	count := 10000
 
 	cfg := VfsConfig{
 		IndexDir:           ts.testDir,
@@ -187,25 +187,41 @@ func TestStoreAndGetMany(t *testing.T) {
 	recordNumber := 0
 	retrievals := 0
 	purges := 0
+	var pending atomic.Int32
+
 	for i := 0; i < count; i++ {
 		if fatal.Load() != nil {
 			break
 		}
 
-		// pick an operation at random, with 29% lookup, 70% set and 1% purge
-		op := mrand.Intn(100)
-		if op < 29 {
-			op = 0
-		} else if op < 99 {
-			op = 1
-		} else {
-			op = 2
+		if i%250 == 0 {
+			fmt.Printf("records: %d\n", recordNumber)
+		}
+
+		// pick an operation at random, with 40% lookup, 60% set, and purge every 500
+		//
+		// N.B. the afero ram disk uses a memmove on a single allocation to expand a file,
+		//      and if the index gets too large, the test will slow to a crawl
+		op := 2
+		if i%500 != 0 {
+			if mrand.Intn(100) < 40 {
+				op = 0
+			} else {
+				op = 1
+			}
+		}
+
+		// thrashing in go when there are too many go routines waiting on the same mutex
+		if pending.Load() == 25 {
+			wg.Wait()
 		}
 
 		if op == 0 {
+			pending.Add(1)
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				defer pending.Add(-1)
 
 				mu.Lock()
 				if recordNumber > 0 {
@@ -213,6 +229,7 @@ func TestStoreAndGetMany(t *testing.T) {
 					keyStr := allKeys[idx]
 					key, err := hex.DecodeString(keyStr)
 					if err != nil {
+						mu.Unlock()
 						fatal.Store(&err)
 						return
 					}
@@ -241,15 +258,19 @@ func TestStoreAndGetMany(t *testing.T) {
 			}()
 		} else if op == 1 {
 			wg.Add(1)
+			pending.Add(1)
 			go func() {
+				defer wg.Done()
+				defer pending.Add(-1)
+
 				mu.Lock()
 				records := make([]StoreRecord, 0, 48)
 
-				setSize := mrand.Intn(32) + 16
+				setSize := mrand.Intn(8) + 8
 				for i := 0; i < setSize; i++ {
 					key := make([]byte, 20)
 					rand.Read(key)
-					datalen := mrand.Intn(2048) + 1
+					datalen := mrand.Intn(256) + 1
 					data := make([]byte, datalen)
 					rand.Read(data)
 
@@ -266,8 +287,6 @@ func TestStoreAndGetMany(t *testing.T) {
 					fatal.Store(&err)
 					return
 				}
-
-				defer wg.Done()
 			}()
 		} else {
 			// block to limit the go routine growth

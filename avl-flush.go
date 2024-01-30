@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-func (af *avlTreeS) flush() (err error) {
+func (af *avlTree) flush() (err error) {
 	err = af.lastError()
 	if err != nil {
 		return
@@ -157,7 +157,7 @@ func (af *avlTreeS) flush() (err error) {
 	return
 }
 
-func (af *avlTreeS) backUp(w *bufio.Writer, offset uint64, content []byte) (err error) {
+func (af *avlTree) backUp(w *bufio.Writer, offset uint64, content []byte) (err error) {
 	o := [8]byte{}
 	binary.BigEndian.PutUint64(o[:], offset)
 	n, err := w.Write(o[:])

@@ -32,7 +32,7 @@ func benchmarkInitialize(b *testing.B) (ts *testState) {
 func TestIndexWrites(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	index, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestIndexWrites(t *testing.T) {
 func TestIndexWrites2(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	index1, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index1, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestIndexWrites2(t *testing.T) {
 
 	index1.Close()
 
-	index2, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestIndexWrites2(t *testing.T) {
 func BenchmarkIndex(b *testing.B) {
 	ts := benchmarkInitialize(b)
 
-	index1, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index1, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func BenchmarkIndex(b *testing.B) {
 func TestIndexDiscardSome(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	index1, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index1, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestIndexDiscardSome(t *testing.T) {
 	index1.Check()
 	index1.Close()
 
-	index2, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,7 @@ func TestIndexDiscardSome(t *testing.T) {
 
 	index2.Close()
 
-	index3, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index3, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,8 +301,7 @@ func TestIndexDiscardSome(t *testing.T) {
 		}
 	}
 
-	ai := index3.(*avlIndex)
-	stats := ai.tree.Stats()
+	stats := index3.tree.Stats()
 	if stats.Deletes != uint64(deletes) {
 		t.Error("wrong delete count")
 	}
@@ -321,7 +320,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 		BaseName: "index",
 	}
 
-	index1, err := NewIndex(&cfg)
+	index1, err := newIndex(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +358,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 	index1.Check()
 	index1.Close()
 
-	index2, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +412,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 		CacheSize: 256,
 	}
 
-	index1, err := NewIndex(&cfg)
+	index1, err := newIndex(&cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +450,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 
 	index1.Close()
 
-	index2, err := NewIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
 	if err != nil {
 		t.Fatal(err)
 	}
