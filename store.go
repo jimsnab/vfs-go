@@ -87,17 +87,27 @@ func NewStore(cfg *VfsConfig) (st Store, err error) {
 }
 
 func (st *store) calcShard(when time.Time) uint64 {
+	// convert time to an integral
 	divisor := uint64(24 * 60 * 60 * 1000 * st.cfg.ShardDurationDays)
 	if divisor < 1 {
 		divisor = 1
 	}
 	shard := uint64(when.UnixMilli())
 	shard = shard / divisor
+
+	// multiply by 10 to leave some numeric space between shards
+	//
+	// for example, it may be desired to compact old shards, and having space to insert
+	// another allows transactions to be moved one by one, while the rest of the system
+	// continues to operate
+	//
+	// it also leaves space for migration to a new format
+	shard *= 10
 	return shard
 }
 
 func (st *store) timeFromShard(shard uint64) time.Time {
-	ms := int64(shard) * int64(24*60*60*1000*st.cfg.ShardDurationDays)
+	ms := int64(shard/10) * int64(24*60*60*1000*st.cfg.ShardDurationDays)
 	return time.Unix(int64(ms/1000), (ms%1000)*1000*1000)
 }
 
