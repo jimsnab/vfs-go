@@ -39,20 +39,23 @@ type (
 	}
 
 	StoreStats struct {
-		Sets        uint64
-		Deletes     uint64
-		Keys        uint64
-		KeysRemoved uint64
+		Sets           uint64
+		Deletes        uint64
+		Keys           uint64
+		KeysRemoved    uint64
+		ShardsAccessed uint64
+		ShardsRemoved  uint64
 	}
 
 	store struct {
-		mu           sync.Mutex
-		ai           *avlIndex
-		shards       map[uint64]afero.File
-		accessed     map[uint64]time.Time
-		cfg          VfsConfig
-		filesRemoved int
-		keysRemoved  uint64
+		mu             sync.Mutex
+		ai             *avlIndex
+		shards         map[uint64]afero.File
+		accessed       map[uint64]time.Time
+		cfg            VfsConfig
+		keysRemoved    uint64
+		shardsAccessed uint64
+		shardsRemoved  uint64
 	}
 )
 
@@ -117,6 +120,7 @@ func (st *store) openShard(request uint64) (f afero.File, shard uint64, err erro
 
 		st.shards[shard] = f
 		st.accessed[shard] = time.Now().UTC()
+		st.shardsAccessed++
 
 		cutoff := time.Now().UTC().Add(-time.Minute)
 		for sh, ts := range st.accessed {
@@ -171,7 +175,7 @@ func (st *store) purgeShards(cutoff time.Time) (err error) {
 				return
 			}
 
-			st.filesRemoved++
+			st.shardsRemoved++
 		}
 	}
 
@@ -320,10 +324,12 @@ func (st *store) Stats() StoreStats {
 	indexStats := st.ai.Stats()
 
 	return StoreStats{
-		Sets:        indexStats.Sets,
-		Deletes:     indexStats.Deletes,
-		Keys:        st.ai.tree.NodeCount(),
-		KeysRemoved: st.keysRemoved,
+		Sets:           indexStats.Sets,
+		Deletes:        indexStats.Deletes,
+		Keys:           st.ai.tree.NodeCount(),
+		KeysRemoved:    st.keysRemoved,
+		ShardsAccessed: st.shardsAccessed,
+		ShardsRemoved:  st.shardsRemoved,
 	}
 }
 

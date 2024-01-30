@@ -306,5 +306,5 @@ func TestStoreAndGetMany(t *testing.T) {
 
 	fmt.Printf("records set: %d, records retrieved: %d\n", recordNumber, retrievals)
 	s := st.(*store)
-	fmt.Printf("purges: %d, files removed: %d, keys removed: %d\n", purges, s.filesRemoved, s.keysRemoved)
+	fmt.Printf("purges: %d, files removed: %d, keys removed: %d\n", purges, s.shardsRemoved, s.keysRemoved)
 }
