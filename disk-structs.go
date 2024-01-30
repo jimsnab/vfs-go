@@ -51,6 +51,10 @@ type (
 const kHeaderSize = (8 * 10)
 const kRecordSize = 1 + 1 + 20 + (8 * 8)
 
+// expose the on-disk size of the index header and index record for external tests
+var IndexHeaderSize = kRecordSize
+var IndexRecordSize = kRecordSize
+
 const (
 	rtAvlNode diskRecordType = iota
 	rtFreeNode
