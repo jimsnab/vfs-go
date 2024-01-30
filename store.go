@@ -31,8 +31,8 @@ type (
 	}
 
 	StoreRecord struct {
-		key     []byte
-		content []byte
+		Key     []byte
+		Content []byte
 	}
 
 	store struct {
@@ -183,9 +183,9 @@ func (st *store) StoreContent(records []StoreRecord) (err error) {
 	}
 
 	for _, record := range records {
-		sizedContent := make([]byte, len(record.content)+4)
-		binary.BigEndian.PutUint32(sizedContent[0:4], uint32(len(record.content)))
-		copy(sizedContent[4:], record.content)
+		sizedContent := make([]byte, len(record.Content)+4)
+		binary.BigEndian.PutUint32(sizedContent[0:4], uint32(len(record.Content)))
+		copy(sizedContent[4:], record.Content)
 
 		var offset int64
 		if offset, err = f.Seek(0, io.SeekEnd); err != nil {
@@ -203,7 +203,7 @@ func (st *store) StoreContent(records []StoreRecord) (err error) {
 			return
 		}
 
-		if txn.Set(record.key, shard, uint64(offset)); err != nil {
+		if txn.Set(record.Key, shard, uint64(offset)); err != nil {
 			return
 		}
 	}

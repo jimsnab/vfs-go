@@ -93,7 +93,7 @@ func TestStoreAndGetOneSet(t *testing.T) {
 	}
 
 	for _, record := range records {
-		content, err := st.RetrieveContent(record.key)
+		content, err := st.RetrieveContent(record.Key)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +102,7 @@ func TestStoreAndGetOneSet(t *testing.T) {
 			t.Fatal("content not found")
 		}
 
-		if !bytes.Equal(record.content, content) {
+		if !bytes.Equal(record.Content, content) {
 			t.Fatal("content not equal")
 		}
 	}
