@@ -18,19 +18,23 @@ import (
 type (
 	Store interface {
 		// Saves a batch of records. Existing records with the same key are replaced.
-		StoreContent(records []StoreRecord) (err error)
+		// The caller can optionally provide a callback that is invoked after the disk
+		// is synchronized.
+		StoreContent(records []StoreRecord, onComplete CommitCompleted) (err error)
 
 		// Retrieve a specific record
 		RetrieveContent(key []byte) (content []byte, err error)
 
 		// Discard all records that fall out of the retention period specified in the config.
-		PurgeOld() (err error)
+		// The caller can optionally provide a callback that is invoked after the disk
+		// is synchronized.
+		PurgeOld(onComplete CommitCompleted) (err error)
 
-		// Store metrics
+		// The store metrics
 		Stats() StoreStats
 
 		// Close I/O.
-		Close()
+		Close() error
 	}
 
 	StoreRecord struct {
@@ -192,7 +196,15 @@ func (st *store) purgeShards(cutoff time.Time) (err error) {
 	return
 }
 
-func (st *store) StoreContent(records []StoreRecord) (err error) {
+func (st *store) StoreContent(records []StoreRecord, onComplete CommitCompleted) (err error) {
+	err = st.doStoreContent(records, onComplete)
+	if err != nil && onComplete != nil {
+		onComplete(err)
+	}
+	return
+}
+
+func (st *store) doStoreContent(records []StoreRecord, onComplete CommitCompleted) (err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -232,20 +244,21 @@ func (st *store) StoreContent(records []StoreRecord) (err error) {
 		}
 	}
 
-	if err = txn.EndTransaction(); err != nil {
-		return
-	}
-
 	if st.cfg.SyncTask {
 		go func() {
 			if err = f.Sync(); err != nil {
 				return
 			}
+
 		}()
 	} else if st.cfg.Sync {
 		if err = f.Sync(); err != nil {
 			return
 		}
+	}
+
+	if err = txn.doEndTransaction(onComplete); err != nil {
+		return
 	}
 
 	return
@@ -302,14 +315,22 @@ func (st *store) RetrieveContent(key []byte) (content []byte, err error) {
 		content = data
 	}
 
-	if err = txn.EndTransaction(); err != nil {
+	if err = txn.EndTransaction(nil); err != nil {
 		return
 	}
 
 	return
 }
 
-func (st *store) PurgeOld() (err error) {
+func (st *store) PurgeOld(onComplete CommitCompleted) (err error) {
+	err = st.doPurgeOld(onComplete)
+	if err != nil && onComplete != nil {
+		onComplete(err)
+	}
+	return
+}
+
+func (st *store) doPurgeOld(onComplete CommitCompleted) (err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -317,14 +338,22 @@ func (st *store) PurgeOld() (err error) {
 
 	before := st.ai.tree.Stats()
 
-	if err = st.ai.RemoveBefore(cutoff); err != nil {
+	if err = st.ai.doRemoveBefore(cutoff, func(err error) { st.doPurgeShards(cutoff, onComplete) }); err != nil {
 		return
 	}
 
 	after := st.ai.tree.Stats()
 	st.keysRemoved += after.Deletes - before.Deletes
 
-	return st.purgeShards(cutoff)
+	return nil
+}
+
+func (st *store) doPurgeShards(cutoff time.Time, onComplete CommitCompleted) {
+	err := st.purgeShards(cutoff)
+
+	if onComplete != nil {
+		onComplete(err)
+	}
 }
 
 func (st *store) Stats() StoreStats {
@@ -343,14 +372,22 @@ func (st *store) Stats() StoreStats {
 	}
 }
 
-func (st *store) Close() {
+func (st *store) Close() (err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	st.ai.Close()
+	terr := st.ai.Close()
+	if terr != nil {
+		err = terr
+	}
 	for _, f := range st.shards {
-		f.Close()
+		terr = f.Close()
+		if err == nil && terr != nil {
+			err = terr
+		}
 	}
 	st.shards = map[uint64]afero.File{}
 	st.accessed = map[uint64]time.Time{}
+
+	return err
 }

@@ -41,7 +41,7 @@ type (
 	diskFreeNode struct {
 		Rt     diskRecordType
 		Next   uint64
-		Unused [kRecordSize - (8 + 8)]byte // sized to match diskAvlNode
+		Unused [kRecordSize - kFreeNodeSize]byte // sized to match diskAvlNode
 	}
 
 	diskRecordType byte
@@ -49,6 +49,7 @@ type (
 
 // size of diskAvlNode (the biggest disk record)
 const kHeaderSize = (8 * 10)
+const kFreeNodeSize = 1 + 8
 const kRecordSize = 1 + 1 + 20 + (8 * 8)
 
 // expose the on-disk size of the index header and index record for external tests
@@ -61,16 +62,31 @@ const (
 	rtRecoveryNode
 )
 
-func (af *avlTree) readAvlHeader() (err error) {
+func (tree *avlTree) headerFromRaw(raw []byte, hdr *diskHeader) (err error) {
+	r := bytes.NewReader(raw)
+	return binary.Read(r, binary.BigEndian, hdr)
+}
+
+func (tree *avlTree) readAvlHeader() (err error) {
 	raw := make([]byte, kRecordSize)
-	n, terr := af.f.ReadAt(raw, 0)
+	n, terr := tree.f.ReadAt(raw, 0)
 	if terr != nil {
 		if !errors.Is(terr, io.EOF) {
 			err = terr
 			return
 		}
 
-		if _, err = af.f.WriteAt(raw, 0); err != nil {
+		newHdr := diskHeader{
+			Version:       1,
+			CommittedSize: kRecordSize,
+		}
+		var buf bytes.Buffer
+		binary.Write(&buf, binary.BigEndian, &newHdr)
+		raw = buf.Bytes()
+
+		tree.dirty = true
+
+		if _, err = tree.f.WriteAt(raw, 0); err != nil {
 			return
 		}
 	} else {
@@ -82,69 +98,78 @@ func (af *avlTree) readAvlHeader() (err error) {
 
 	var hdr diskHeader
 	_ = hdr.Unused // this is to work around an absolutely stupid Go team decision
-
-	r := bytes.NewReader(raw)
-	if err = binary.Read(r, binary.BigEndian, &hdr); err != nil {
+	if err = tree.headerFromRaw(raw, &hdr); err != nil {
 		return
 	}
 
-	if terr != nil {
-		hdr.Version = 1
-		hdr.CommittedSize = kRecordSize
-		af.dirty = true
-	} else {
-		af.originalRaw = raw
-	}
+	tree.originalRawHdr = raw
 
 	if hdr.Version != 1 {
 		err = fmt.Errorf("unsupported version %d", hdr.Version)
 		return
 	}
 
-	af.firstFreeOffset = hdr.FirstFreeOffset
-	af.committedSize = hdr.CommittedSize
-	af.rootOffset = hdr.RootOffset
-	af.oldestOffset = hdr.Oldest
-	af.newestOffset = hdr.Newest
-	af.nodeCount = hdr.NodeCount
-	af.freeCount = hdr.FreeCount
-	af.setCount = hdr.SetCount
-	af.deleteCount = hdr.DeleteCount
+	tree.firstFreeOffset = hdr.FirstFreeOffset
+	tree.committedSize = hdr.CommittedSize
+	tree.rootOffset = hdr.RootOffset
+	tree.oldestOffset = hdr.Oldest
+	tree.newestOffset = hdr.Newest
+	tree.nodeCount = hdr.NodeCount
+	tree.freeCount = hdr.FreeCount
+	tree.setCount = hdr.SetCount
+	tree.deleteCount = hdr.DeleteCount
 
-	totalRecords := 1 + af.nodeCount + af.freeCount
+	totalRecords := 1 + tree.nodeCount + tree.freeCount
 	totalSize := totalRecords * kRecordSize
-	if af.committedSize != totalSize {
-		err = fmt.Errorf("committed size %d != size of records %d", af.committedSize, totalSize)
+	if tree.committedSize != totalSize {
+		err = fmt.Errorf("committed size %d != size of records %d", tree.committedSize, totalSize)
 		return
 	}
 
 	return
 }
 
-func (af *avlTree) write() (err error) {
-	hdr := diskHeader{
-		Version:         1,
-		FirstFreeOffset: af.firstFreeOffset,
-		CommittedSize:   af.committedSize,
-		RootOffset:      af.rootOffset,
-		Oldest:          af.oldestOffset,
-		Newest:          af.newestOffset,
-		NodeCount:       af.nodeCount,
-		FreeCount:       af.freeCount,
-		SetCount:        af.setCount,
-		DeleteCount:     af.deleteCount,
+func (tree *avlTree) write() (err error) {
+	if !tree.dirty {
+		panic("hdr dirty flag must be set")
 	}
 
-	if _, err = af.f.Seek(0, io.SeekStart); err != nil {
+	hdr := diskHeader{
+		Version:         1,
+		FirstFreeOffset: tree.firstFreeOffset,
+		CommittedSize:   tree.committedSize,
+		RootOffset:      tree.rootOffset,
+		Oldest:          tree.oldestOffset,
+		Newest:          tree.newestOffset,
+		NodeCount:       tree.nodeCount,
+		FreeCount:       tree.freeCount,
+		SetCount:        tree.setCount,
+		DeleteCount:     tree.deleteCount,
+	}
+
+	var record bytes.Buffer
+	if err = binary.Write(&record, binary.BigEndian, &hdr); err != nil {
 		return
 	}
 
-	return binary.Write(af.f, binary.BigEndian, &hdr)
+	raw := record.Bytes()
+	n, err := tree.f.WriteAt(raw, 0)
+	if err != nil {
+		return
+	}
+	if n != kRecordSize {
+		err = errors.New("incomplete header write")
+		return
+	}
+
+	tree.originalRawHdr = raw
+	tree.dirty = false
+	return
 }
 
-func (af *avlTree) readAvlNode(offset uint64) (an *avlNode, err error) {
+func (tree *avlTree) readAvlNode(offset uint64) (an *avlNode, err error) {
 	raw := make([]byte, kRecordSize)
-	n, err := af.f.ReadAt(raw, int64(offset))
+	n, err := tree.f.ReadAt(raw, int64(offset))
 	if err != nil {
 		return
 	}
@@ -166,24 +191,28 @@ func (af *avlTree) readAvlNode(offset uint64) (an *avlNode, err error) {
 	}
 
 	an = &avlNode{
-		tree:         af,
-		offset:       offset,
-		originalRaw:  raw,
-		balance:      int(node.Balance),
-		key:          node.Key[:],
-		shard:        node.Shard,
-		position:     node.Position,
-		leftOffset:   node.Left,
-		rightOffset:  node.Right,
-		parentOffset: node.Parent,
-		timestamp:    node.Timestamp,
-		prevOffset:   node.Prev,
-		nextOffset:   node.Next,
+		tree:            tree,
+		offset:          offset,
+		originalRawNode: raw,
+		balance:         int(node.Balance),
+		key:             node.Key[:],
+		shard:           node.Shard,
+		position:        node.Position,
+		leftOffset:      node.Left,
+		rightOffset:     node.Right,
+		parentOffset:    node.Parent,
+		timestamp:       node.Timestamp,
+		prevOffset:      node.Prev,
+		nextOffset:      node.Next,
 	}
 	return
 }
 
 func (an *avlNode) write() (err error) {
+	if !an.dirty {
+		panic("node dirty flag must be set")
+	}
+
 	node := diskAvlNode{
 		Rt:        rtAvlNode,
 		Balance:   int8(an.balance),
@@ -198,16 +227,29 @@ func (an *avlNode) write() (err error) {
 	}
 	copy(node.Key[:], an.key)
 
-	if _, err = an.tree.f.Seek(int64(an.offset), io.SeekStart); err != nil {
+	var record bytes.Buffer
+	if err = binary.Write(&record, binary.BigEndian, &node); err != nil {
 		return
 	}
 
-	return binary.Write(an.tree.f, binary.BigEndian, &node)
+	raw := record.Bytes()
+	n, err := an.tree.f.WriteAt(raw, int64(an.offset))
+	if err != nil {
+		return
+	}
+	if n != kRecordSize {
+		err = errors.New("incomplete node write")
+		return
+	}
+
+	an.originalRawNode = raw
+	an.dirty = false
+	return
 }
 
-func (af *avlTree) readFreeNode(offset uint64) (fn *freeNodeS, err error) {
+func (tree *avlTree) readFreeNode(offset uint64) (fn *freeNode, err error) {
 	raw := make([]byte, kRecordSize)
-	n, err := af.f.ReadAt(raw, int64(offset))
+	n, err := tree.f.ReadAt(raw, int64(offset))
 	if err != nil {
 		return
 	}
@@ -230,23 +272,41 @@ func (af *avlTree) readFreeNode(offset uint64) (fn *freeNodeS, err error) {
 		return
 	}
 
-	fn = &freeNodeS{
-		tree:        af,
-		nextOffset:  node.Next,
-		originalRaw: raw,
+	fn = &freeNode{
+		tree:            tree,
+		nextOffset:      node.Next,
+		offset:          offset,
+		originalRawFree: raw,
 	}
 	return
 }
 
-func (fn *freeNodeS) write() (err error) {
+func (fn *freeNode) write() (err error) {
+	if !fn.dirty {
+		panic("node dirty flag must be set")
+	}
+
 	node := diskFreeNode{
 		Rt:   rtFreeNode,
 		Next: fn.nextOffset,
 	}
 
-	if _, err = fn.tree.f.Seek(int64(fn.offset), io.SeekStart); err != nil {
+	var record bytes.Buffer
+	if err = binary.Write(&record, binary.BigEndian, &node); err != nil {
 		return
 	}
 
-	return binary.Write(fn.tree.f, binary.BigEndian, &node)
+	raw := record.Bytes()
+	n, err := fn.tree.f.WriteAt(raw, int64(fn.offset))
+	if err != nil {
+		return
+	}
+	if n != kRecordSize {
+		err = errors.New("incomplete free node write")
+		return
+	}
+
+	fn.originalRawFree = raw
+	fn.dirty = false
+	return
 }

@@ -2,6 +2,7 @@ package vfs
 
 import (
 	"errors"
+	"os"
 	"time"
 
 	"github.com/spf13/afero"
@@ -32,10 +33,16 @@ func newIndex(cfg *VfsConfig) (index *avlIndex, err error) {
 	return
 }
 
-func (ai *avlIndex) Close() {
+func (ai *avlIndex) Close() (err error) {
+	ai.tree.dt1sync.Wait()
+	ai.tree.dt2sync.Wait()
+
 	if ai.tree != nil {
 		ai.tree.Close()
+	} else {
+		err = os.ErrClosed
 	}
+	return
 }
 
 func (ai *avlIndex) BeginTransaction() (txn *avlTransaction, err error) {
@@ -52,7 +59,15 @@ func (ai *avlIndex) BeginTransaction() (txn *avlTransaction, err error) {
 	return
 }
 
-func (ai *avlIndex) RemoveBefore(cutoff time.Time) (err error) {
+func (ai *avlIndex) RemoveBefore(cutoff time.Time, onComplete CommitCompleted) (err error) {
+	err = ai.doRemoveBefore(cutoff, onComplete)
+	if err != nil && onComplete != nil {
+		onComplete(err)
+	}
+	return
+}
+
+func (ai *avlIndex) doRemoveBefore(cutoff time.Time, onComplete CommitCompleted) (err error) {
 	if ai.txn != nil {
 		err = ErrTransactionStarted
 		return
@@ -61,7 +76,7 @@ func (ai *avlIndex) RemoveBefore(cutoff time.Time) (err error) {
 	cutoffNs := cutoff.UnixNano()
 	deletions := 0
 	var order int64
-	ai.tree.IterateByTimestamp(func(node *avlNode) bool {
+	terr := ai.tree.IterateByTimestamp(func(node *avlNode) error {
 		createdNs := node.Timestamp()
 
 		if createdNs < order {
@@ -70,33 +85,49 @@ func (ai *avlIndex) RemoveBefore(cutoff time.Time) (err error) {
 		order = createdNs
 
 		if createdNs >= cutoffNs {
-			return false
+			return ErrIteratorAbort
 		}
 
 		// delete invalidates node
-		if !ai.tree.Delete(node.Key()) {
-			panic("didn't find node in the tree")
+		wasDeleted, err := ai.tree.Delete(node.Key())
+		if err != nil {
+			return err
+		}
+
+		if !wasDeleted {
+			return ErrDamagedIndex
 		}
 
 		deletions++
 		if deletions == 1000 {
 			// flush every 1000 removals
 			deletions = 0
-			ai.tree.flush()
+			ai.tree.flush(nil)
 		}
 
-		return true
+		return nil
 	})
 
-	return ai.tree.flush()
+	if terr != nil && terr != ErrIteratorAbort {
+		err = terr
+		return
+	}
+
+	return ai.tree.flush(onComplete)
 }
 
 func (ai *avlIndex) Stats() avlTreeStats {
 	return ai.tree.Stats()
 }
 
-func (ai *avlIndex) Check() {
-	if !ai.tree.isValid() {
+func (ai *avlIndex) Check() (err error) {
+	valid, err := ai.tree.isValid()
+	if err != nil { // couldn't determine validity
+		return
+	}
+
+	if !valid {
 		panic("check failure")
 	}
+	return
 }

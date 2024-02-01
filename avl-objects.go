@@ -1,89 +1,105 @@
 package vfs
 
 import (
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"sync"
-	"sync/atomic"
 
 	"github.com/spf13/afero"
 )
 
 type (
-	AvlIterator func(node *avlNode) bool
+	AvlIterator func(node *avlNode) error
 
 	avlTree struct {
-		mu              sync.Mutex
+		sync.Mutex
 		cfg             *VfsConfig
-		err             atomic.Pointer[error]
 		f               afero.File
 		rf              afero.File
 		dirty           bool
-		originalRaw     []byte
+		originalRawHdr  []byte
 		rootOffset      uint64
 		firstFreeOffset uint64
 		committedSize   uint64
+		allocatedSize   uint64
 		oldestOffset    uint64
 		newestOffset    uint64
 		writtenNodes    []*avlNode
 		nodeCache       map[uint64]*avlNode
 		allocLru        *lruStack[*avlNode]
 		nodeCount       uint64
-		freeNodes       map[uint64]*freeNodeS
+		freeNodes       map[uint64]*freeNode
 		freeCount       uint64
 		setCount        uint64
 		deleteCount     uint64
-		zeroNode        *avlNode
-		printValues     bool
+		printType       testPrintType
 		dt1sync         sync.WaitGroup
 		dt2sync         sync.WaitGroup
 		nextByTime      uint64
 		keyIteration    bool
+		closed          bool
 	}
 
 	avlNode struct {
-		tree         *avlTree
-		offset       uint64
-		dirty        bool
-		originalRaw  []byte
-		lru          *lruStackElement[*avlNode]
-		balance      int
-		key          []byte
-		shard        uint64
-		position     uint64
-		leftOffset   uint64
-		rightOffset  uint64
-		parentOffset uint64
-		timestamp    int64
-		prevOffset   uint64
-		nextOffset   uint64
+		tree            *avlTree
+		offset          uint64
+		dirty           bool
+		originalRawNode []byte
+		lru             *lruStackElement[*avlNode]
+		balance         int
+		key             []byte
+		shard           uint64
+		position        uint64
+		leftOffset      uint64
+		rightOffset     uint64
+		parentOffset    uint64
+		timestamp       int64
+		prevOffset      uint64
+		nextOffset      uint64
 	}
 
-	freeNodeS struct {
-		tree        *avlTree
-		dirty       bool
-		originalRaw []byte
-		offset      uint64
-		next        *freeNodeS
-		nextOffset  uint64
+	freeNode struct {
+		tree            *avlTree
+		dirty           bool
+		originalRawFree []byte
+		offset          uint64
+		next            *freeNode
+		nextOffset      uint64
 	}
 
 	avlTreeStats struct {
 		Sets    uint64
 		Deletes uint64
 	}
+
+	testPrintType int
 )
+
+var ErrIteratorAbort = errors.New("iteration aborted")
+var ErrDamagedIndex = errors.New("damaged index")
 
 const kAllocCacheSize = int(1e5)
 const kFreeCacheSize = 1024
 const kTransactionAverageSize = 256
+
+const (
+	testPtBalance testPrintType = iota
+	testPtKey
+	testPtPosition
+)
 
 func newAvlTree(cfg *VfsConfig) (tree *avlTree, err error) {
 	filePath := path.Join(cfg.IndexDir, fmt.Sprintf("%s.dt1", cfg.BaseName))
 	f, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		err = fmt.Errorf("error opening index file %s: %v", filePath, err)
+		return
+	}
+
+	if err = f.Sync(); err != nil {
 		return
 	}
 
@@ -95,32 +111,37 @@ func newAvlTree(cfg *VfsConfig) (tree *avlTree, err error) {
 		return
 	}
 
+	if err = rf.Sync(); err != nil {
+		return
+	}
+
 	acs := kAllocCacheSize
 	if cfg.CacheSize != 0 {
 		acs = cfg.CacheSize
 	}
 
-	af := avlTree{
+	at := avlTree{
 		f:            f,
 		rf:           rf,
 		writtenNodes: make([]*avlNode, 0, kTransactionAverageSize),
 		nodeCache:    make(map[uint64]*avlNode, acs),
-		freeNodes:    make(map[uint64]*freeNodeS, kFreeCacheSize),
+		freeNodes:    make(map[uint64]*freeNode, kFreeCacheSize),
 		cfg:          cfg,
 	}
-	af.allocLru = newLruStack[*avlNode](acs, af.collectNode)
-	af.zeroNode = &avlNode{tree: &af}
+	at.allocLru = newLruStack[*avlNode](acs, at.collectNode)
 
 	err = func() (err error) {
 		// recover from interrupted operations
-		if err = af.recover(); err != nil {
+		if err = at.recover(); err != nil {
 			return
 		}
 
 		// load the header
-		if err = af.readAvlHeader(); err != nil {
+		if err = at.readAvlHeader(); err != nil {
 			return err
 		}
+
+		at.allocatedSize = at.committedSize
 
 		return nil
 	}()
@@ -130,23 +151,30 @@ func newAvlTree(cfg *VfsConfig) (tree *avlTree, err error) {
 		return
 	}
 
-	tree = &af
+	tree = &at
 	return
 }
 
-func (af *avlTree) Close() {
-	af.f.Close()
-	af.rf.Close()
-	if af.lastError() == nil {
-		af.err.Store(&os.ErrClosed)
+func (tree *avlTree) Close() (err error) {
+	if tree.closed {
+		err = os.ErrClosed
+		return
 	}
+
+	tree.f.Close()
+	tree.rf.Close()
+	tree.closed = true
+	return
 }
 
-func (af *avlTree) collectNode(an *avlNode) bool {
+func (tree *avlTree) collectNode(an *avlNode) bool {
+	// stop "unused" warning for this development function
+	_ = an.dump
+
 	if !an.dirty {
-		p := af.nodeCache[an.offset]
+		p := tree.nodeCache[an.offset]
 		if p != nil {
-			delete(af.nodeCache, an.offset)
+			delete(tree.nodeCache, an.offset)
 		}
 		return true
 	}
@@ -154,18 +182,18 @@ func (af *avlTree) collectNode(an *avlNode) bool {
 	return false
 }
 
-func (af *avlTree) NodeCount() uint64 {
-	return af.nodeCount
+func (tree *avlTree) NodeCount() uint64 {
+	return tree.nodeCount
 }
 
-func (af *avlTree) FreeCount() uint64 {
-	return af.freeCount
+func (tree *avlTree) FreeCount() uint64 {
+	return tree.freeCount
 }
 
-func (af *avlTree) Stats() avlTreeStats {
+func (tree *avlTree) Stats() avlTreeStats {
 	return avlTreeStats{
-		Sets:    af.setCount,
-		Deletes: af.deleteCount,
+		Sets:    tree.setCount,
+		Deletes: tree.deleteCount,
 	}
 }
 
@@ -220,7 +248,7 @@ func (an *avlNode) SetTimestamp(ts int64) {
 	an.timestamp = ts
 }
 
-func (an *avlNode) SwapTimestamp(bn *avlNode) {
+func (an *avlNode) SwapTimestamp(bn *avlNode) (err error) {
 	ts := an.timestamp
 	an.nodeDirty()
 	an.timestamp = bn.Timestamp()
@@ -232,164 +260,156 @@ func (an *avlNode) SwapTimestamp(bn *avlNode) {
 	offsetB := bn.Offset()
 
 	// saveprev = B.prev or B if B.prev=A, B.prev set to A.prev, A.prev.next point to B
-	saveprev := bn.Prev()
+	saveprev, err := an.tree.loadNode(bn.PrevOffset())
+	if err != nil {
+		return
+	}
 	if offsetOf(saveprev) == offsetA {
 		saveprev = bn
 	}
-	link := an.Prev()
-	bn.SetPrev(link)
+	link, err := an.tree.loadNode(an.PrevOffset())
+	if err != nil {
+		return
+	}
+	bn.SetPrevOffset(offsetOf(link))
 	if link == nil {
-		tree.setOldest(bn)
+		tree.setOldestOffset(offsetOf(bn))
 	} else {
-		link.SetNext(bn)
+		link.SetNextOffset(offsetOf(bn))
 	}
 
 	// savenext = A.next or A if A.next==B, A.next set to B.next, B.next.prev point to A
-	savenext := an.Next()
+	savenext, err := an.tree.loadNode(an.NextOffset())
+	if err != nil {
+		return
+	}
 	if offsetOf(savenext) == offsetB {
 		savenext = an
 	}
-	link = bn.Next()
-	an.SetNext(link)
+	if link, err = an.tree.loadNode(bn.NextOffset()); err != nil {
+		return
+	}
+	an.SetNextOffset(offsetOf(link))
 	if link == nil {
-		tree.setNewest(an)
+		tree.setNewestOffset(offsetOf(an))
 	} else {
-		link.SetPrev(an)
+		link.SetPrevOffset(offsetOf(an))
 	}
 
 	// set B.next to savenext, savenext.prev to B
-	bn.SetNext(savenext)
+	bn.SetNextOffset(offsetOf(savenext))
 	if savenext == nil {
-		tree.setNewest(an)
+		tree.setNewestOffset(offsetOf(an))
 	} else {
-		savenext.SetPrev(bn)
+		savenext.SetPrevOffset(offsetOf(bn))
 	}
 
 	// set A.prev to saveprev, saveprev.next to A
-	an.SetPrev(saveprev)
+	an.SetPrevOffset(offsetOf(saveprev))
 	if saveprev == nil {
-		tree.setOldest(an)
+		tree.setOldestOffset(offsetOf(an))
 	} else {
-		saveprev.SetNext(an)
+		saveprev.SetNextOffset(offsetOf(an))
 	}
+
+	return
 }
 
 func (an *avlNode) Timestamp() int64 {
 	return an.timestamp
 }
 
-func (af *avlTree) lock() error {
-	af.mu.Lock()
-	err := af.lastError()
-	if err != nil {
-		af.mu.Unlock()
-		return err
-	}
-
-	return nil
+func (tree *avlTree) getRootOffset() uint64 {
+	return tree.rootOffset
 }
 
-func (af *avlTree) unlock() {
-	af.mu.Unlock()
+func (tree *avlTree) setRootOffset(rootOffset uint64) {
+	tree.dirty = true
+	tree.rootOffset = rootOffset
 }
 
-func (af *avlTree) lastError() error {
-	perr := af.err.Load()
-	if perr != nil {
-		return *perr
-	}
-	return nil
+func (tree *avlTree) getOldestOffset() uint64 {
+	return tree.oldestOffset
+}
+func (tree *avlTree) setOldestOffset(nodeOffset uint64) {
+	tree.dirty = true
+	tree.oldestOffset = nodeOffset
 }
 
-func (af *avlTree) getRoot() *avlNode {
-	return af.loadNode(af.rootOffset)
+func (tree *avlTree) getNewestOffset() uint64 {
+	return tree.newestOffset
 }
 
-func (af *avlTree) setRoot(root *avlNode) {
-	af.dirty = true
-	af.rootOffset = offsetOf(root)
-}
-
-func (af *avlTree) getOldest() *avlNode {
-	return af.loadNode(af.oldestOffset)
-}
-func (af *avlTree) setOldest(node *avlNode) {
-	af.dirty = true
-	af.oldestOffset = offsetOf(node)
-}
-
-func (af *avlTree) getNewest() *avlNode {
-	return af.loadNode(af.newestOffset)
-}
-
-func (af *avlTree) setNewest(node *avlNode) {
-	af.dirty = true
-	af.newestOffset = offsetOf(node)
+func (tree *avlTree) setNewestOffset(nodeOffset uint64) {
+	tree.dirty = true
+	tree.newestOffset = nodeOffset
 }
 
 func (an *avlNode) Offset() uint64 {
+	if an == nil {
+		return 0
+	}
 	return an.offset
 }
 
-func (an *avlNode) Left() *avlNode {
+func (an *avlNode) LeftOffset() uint64 {
 	if an == nil {
-		return nil
+		return 0
 	}
-	return an.tree.loadNode(an.leftOffset)
+	return an.leftOffset
 }
 
-func (an *avlNode) SetLeft(left *avlNode) {
+func (an *avlNode) SetLeftOffset(leftOffset uint64) {
 	an.nodeDirty()
-	an.leftOffset = offsetOf(left)
+	an.leftOffset = leftOffset
 }
 
-func (an *avlNode) Right() *avlNode {
+func (an *avlNode) RightOffset() uint64 {
 	if an == nil {
-		return nil
+		return 0
 	}
-
-	return an.tree.loadNode(an.rightOffset)
+	return an.rightOffset
 }
 
-func (an *avlNode) SetRight(right *avlNode) {
+func (an *avlNode) SetRightOffset(rightOffset uint64) {
 	an.nodeDirty()
-	an.rightOffset = offsetOf(right)
+	an.rightOffset = rightOffset
 }
 
-func (an *avlNode) Parent() *avlNode {
+func (an *avlNode) ParentOffset() uint64 {
 	if an == nil {
-		return nil
+		return 0
 	}
-	return an.tree.loadNode(an.parentOffset)
+	return an.parentOffset
 }
 
-func (an *avlNode) SetParent(parent *avlNode) {
+func (an *avlNode) SetParentOffset(parentOffset uint64) {
 	an.nodeDirty()
-	an.parentOffset = offsetOf(parent)
+	an.parentOffset = parentOffset
 }
 
-func (an *avlNode) Next() *avlNode {
+func (an *avlNode) NextOffset() uint64 {
 	if an == nil {
-		return nil
+		return 0
 	}
-	return an.tree.loadNode(an.nextOffset)
+	return an.nextOffset
 }
 
-func (an *avlNode) SetNext(next *avlNode) {
+func (an *avlNode) SetNextOffset(nextOffset uint64) {
 	an.nodeDirty()
-	an.nextOffset = offsetOf(next)
+	an.nextOffset = nextOffset
 }
 
-func (an *avlNode) Prev() *avlNode {
+func (an *avlNode) PrevOffset() uint64 {
 	if an == nil {
-		return nil
+		return 0
 	}
-	return an.tree.loadNode(an.prevOffset)
+	return an.prevOffset
 }
 
-func (an *avlNode) SetPrev(prev *avlNode) {
+func (an *avlNode) SetPrevOffset(prevOffset uint64) {
 	an.nodeDirty()
-	an.prevOffset = offsetOf(prev)
+	an.prevOffset = prevOffset
 }
 
 func (an *avlNode) touch() {
@@ -400,6 +420,21 @@ func (an *avlNode) dump(prefix string) {
 	fmt.Printf("%s: %d parent=%d left=%d right=%d\n", prefix, an.timestamp, an.parentOffset, an.leftOffset, an.rightOffset)
 }
 
+func (an *avlNode) String() string {
+	return fmt.Sprintf(
+		"key:%s shard:%d position:%d ts:%d parent:%d left:%d right:%d next:%d prev:%d",
+		hex.EncodeToString(an.key),
+		an.shard,
+		an.position,
+		an.timestamp,
+		an.parentOffset,
+		an.leftOffset,
+		an.rightOffset,
+		an.leftOffset,
+		an.rightOffset,
+	)
+}
+
 func offsetOf(node *avlNode) uint64 {
 	if node == nil {
 		return 0
@@ -407,26 +442,15 @@ func offsetOf(node *avlNode) uint64 {
 	return node.Offset()
 }
 
-func (fn *freeNodeS) Offset() uint64 {
+func (fn *freeNode) Offset() uint64 {
 	return fn.offset
 }
 
-func (fn *freeNodeS) Next() *freeNodeS {
-	if fn.tree.err.Load() != nil {
-		return &freeNodeS{}
-	}
-
-	if fn.next == nil {
-		fn.next = fn.tree.loadFreeNode(fn.nextOffset)
-	}
-	return fn.next
-}
-
-func (fn *freeNodeS) NextOffset() uint64 {
+func (fn *freeNode) NextOffset() uint64 {
 	return fn.nextOffset
 }
 
-func (fn *freeNodeS) SetNext(next *freeNodeS) {
+func (fn *freeNode) SetNext(next *freeNode) {
 	fn.dirty = true
 	fn.next = next
 	fn.nextOffset = next.Offset()

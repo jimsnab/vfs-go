@@ -38,7 +38,7 @@ func TestStoreAndGetOne(t *testing.T) {
 
 	records := []StoreRecord{{key, data}}
 
-	if err = st.StoreContent(records); err != nil {
+	if err = st.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,7 +88,7 @@ func TestStoreAndGetOneSet(t *testing.T) {
 		records = append(records, StoreRecord{key, data})
 	}
 
-	if err = st.StoreContent(records); err != nil {
+	if err = st.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,7 +136,7 @@ func TestStoreAndGet1000(t *testing.T) {
 
 		records := []StoreRecord{{key, data}}
 
-		if err = st.StoreContent(records); err != nil {
+		if err = st.StoreContent(records, nil); err != nil {
 			t.Fatal(err)
 		}
 
@@ -283,14 +283,14 @@ func TestStoreAndGetMany(t *testing.T) {
 				}
 				mu.Unlock()
 
-				if err = st.StoreContent(records); err != nil {
+				if err = st.StoreContent(records, nil); err != nil {
 					fatal.Store(&err)
 					return
 				}
 			}()
 		} else {
 			// block to limit the go routine growth
-			if err = st.PurgeOld(); err != nil {
+			if err = st.PurgeOld(nil); err != nil {
 				t.Fatal(err)
 				return
 			}

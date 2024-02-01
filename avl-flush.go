@@ -3,157 +3,147 @@ package vfs
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"io"
 )
 
-func (af *avlTree) flush() (err error) {
-	err = af.lastError()
-	if err != nil {
-		return
-	}
+type (
+	CommitCompleted func(err error)
+)
 
-	// update the commit file size
-	size, err := af.f.Seek(0, io.SeekEnd)
-	if err != nil {
-		af.err.Store(&err)
-		return
-	}
-
-	if size != int64(af.committedSize) {
-		af.committedSize = uint64(size)
-		af.dirty = true
-	}
-
+// inner function - does not call onComplete when it returns non nil err
+func (tree *avlTree) flush(onComplete CommitCompleted) (err error) {
 	// back up everything
 	hasBackup := false
-	if af.cfg.RecoveryEnabled {
+	if tree.cfg.RecoveryEnabled {
 
 		// ensure the last recovery file change completed
-		af.dt2sync.Wait()
+		tree.dt2sync.Wait()
 
-		if _, err = af.rf.Seek(0, io.SeekEnd); err != nil {
-			af.err.Store(&err)
+		var priorSize int64
+		if priorSize, err = tree.rf.Seek(0, io.SeekEnd); err != nil {
+			return
+		}
+		if priorSize != 0 {
+			err = errors.New("can't overwrite pending recovery records")
 			return
 		}
 
-		w := bufio.NewWriter(af.rf)
+		w := bufio.NewWriter(tree.rf)
 
-		for _, node := range af.writtenNodes {
-			if node.originalRaw != nil {
-				if err = af.backUp(w, node.offset, node.originalRaw); err != nil {
-					af.err.Store(&err)
+		for _, node := range tree.writtenNodes {
+			if node.originalRawNode != nil {
+				if err = tree.backUp(w, node.offset, node.originalRawNode); err != nil {
 					return
 				}
 				hasBackup = true
 			}
 		}
 
-		for _, node := range af.freeNodes {
-			if node != nil && node.dirty && node.originalRaw != nil {
-				if err = af.backUp(w, node.offset, node.originalRaw); err != nil {
-					af.err.Store(&err)
+		for _, node := range tree.freeNodes {
+			if node != nil && node.dirty && node.originalRawFree != nil {
+				if err = tree.backUp(w, node.offset, node.originalRawFree); err != nil {
 					return
 				}
 				hasBackup = true
 			}
 		}
 
-		if af.dirty {
-			if err = af.backUp(w, 0, af.originalRaw); err != nil {
-				af.err.Store(&err)
-				return
-			}
-			hasBackup = true
-		}
-
+		// always back up the header
 		if hasBackup {
-			if err = w.Flush(); err != nil {
-				af.err.Store(&err)
+			if err = tree.backUp(w, 0, tree.originalRawHdr); err != nil {
 				return
 			}
 
-			if err = af.rf.Sync(); err != nil {
-				af.err.Store(&err)
+			// backup complete - ensure it gets to disk
+			if err = w.Flush(); err != nil {
+				return
+			}
+
+			if err = tree.rf.Sync(); err != nil {
 				return
 			}
 		}
 	}
 
-	// let the previous write get fully committed before writing more
-	af.dt1sync.Wait()
+	// ensure last sync completed
+	tree.dt1sync.Wait()
+
+	// update the commit file size
+	if tree.allocatedSize != tree.committedSize {
+		tree.committedSize = tree.allocatedSize
+		tree.dirty = true
+		if err = tree.f.Truncate(int64(tree.committedSize)); err != nil {
+			return
+		}
+	}
 
 	// write all the changes
-	for _, node := range af.writtenNodes {
+	for _, node := range tree.writtenNodes {
 		if err = node.write(); err != nil {
-			af.err.Store(&err)
 			return
 		}
 	}
 
-	for _, node := range af.freeNodes {
+	for _, node := range tree.freeNodes {
 		if node != nil && node.dirty {
 			if err = node.write(); err != nil {
-				af.err.Store(&err)
 				return
 			}
 		}
 	}
 
-	if af.dirty {
-		if err = af.write(); err != nil {
-			af.err.Store(&err)
+	if tree.dirty {
+		if err = tree.write(); err != nil {
 			return
 		}
 	}
 
-	if af.cfg.SyncTask {
-		af.dt1sync.Add(1)
+	if tree.cfg.SyncTask {
+		tree.dt1sync.Add(1)
 		go func() {
-			defer af.dt1sync.Done()
-			if err = af.f.Sync(); err != nil {
-				af.err.Store(&err)
+			defer tree.dt1sync.Done()
+			if err = tree.f.Sync(); err != nil {
 				return
 			}
 		}()
-	} else if af.cfg.Sync {
-		if err = af.f.Sync(); err != nil {
-			af.err.Store(&err)
+	} else if tree.cfg.Sync {
+		if err = tree.f.Sync(); err != nil {
 			return
 		}
 	}
 
 	// success - discard recovery data
 	if hasBackup {
-		if err = af.rf.Truncate(0); err != nil {
-			af.err.Store(&err)
-			return
-		}
-
-		af.dt2sync.Add(1)
+		tree.dt2sync.Add(1)
 		go func() {
-			defer af.dt2sync.Done()
+			err := func() error {
+				defer tree.dt2sync.Done()
 
-			if err = af.rf.Sync(); err != nil {
-				af.err.Store(&err)
-				return
+				tree.dt1sync.Wait()
+
+				err := tree.rf.Truncate(0)
+				if err != nil {
+					return err
+				}
+
+				return tree.rf.Sync()
+			}()
+			if onComplete != nil {
+				onComplete(err)
 			}
 		}()
-	}
-
-	// remove the dirty flags and purge old loaded data
-	af.dirty = false
-	for _, node := range af.writtenNodes {
-		node.dirty = false
-	}
-	af.writtenNodes = af.writtenNodes[:0]
-
-	for _, node := range af.freeNodes {
-		if node != nil {
-			node.dirty = false
+	} else {
+		if onComplete != nil {
+			onComplete(nil)
 		}
 	}
 
-	af.allocLru.Collect()
+	// purge write queue
+	tree.writtenNodes = tree.writtenNodes[:0]
+
+	// toss old allocs
+	tree.allocLru.Collect()
 	return
 }
 

@@ -7,9 +7,9 @@ import (
 	"io"
 )
 
-func (af *avlTree) recover() (err error) {
-	f := af.f
-	rf := af.rf
+func (tree *avlTree) recover() (err error) {
+	f := tree.f
+	rf := tree.rf
 
 	fileSize, err := f.Seek(0, io.SeekEnd)
 	if err != nil {
@@ -21,6 +21,8 @@ func (af *avlTree) recover() (err error) {
 	}
 
 	writes := make(map[uint64]struct{}, 1024)
+
+	var indexSize int64
 
 	for {
 		raw := make([]byte, kRecordSize+8)
@@ -56,6 +58,28 @@ func (af *avlTree) recover() (err error) {
 		writes[offset] = struct{}{}
 
 		if _, err = f.WriteAt(raw[8:], int64(offset)); err != nil {
+			return
+		}
+
+		if offset == 0 {
+			// this is the replacement header - it informs us what the index file size should be
+			var hdr diskHeader
+			if err = tree.headerFromRaw(raw[8:], &hdr); err != nil {
+				return
+			}
+
+			totalRecords := 1 + hdr.NodeCount + hdr.FreeCount
+			totalSize := totalRecords * kRecordSize
+			if hdr.CommittedSize != totalSize {
+				panic(fmt.Sprintf("committed size %d != size of records %d", hdr.CommittedSize, totalSize))
+			}
+
+			indexSize = int64(hdr.CommittedSize)
+		}
+	}
+
+	if indexSize != 0 {
+		if err = f.Truncate(indexSize); err != nil {
 			return
 		}
 	}

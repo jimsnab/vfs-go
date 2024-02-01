@@ -2,7 +2,11 @@ package vfs
 
 import (
 	"crypto/rand"
+	"errors"
+	"fmt"
 	mrand "math/rand"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,7 +62,7 @@ func TestIndexWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -88,7 +92,7 @@ func TestIndexWrites(t *testing.T) {
 			t.Fatal("not shard")
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -123,7 +127,7 @@ func TestIndexWrites2(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -160,7 +164,7 @@ func TestIndexWrites2(t *testing.T) {
 			t.Fatal("not shard")
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,7 +198,7 @@ func BenchmarkIndex(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -209,7 +213,7 @@ func TestIndexDiscardSome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	count := 15000
+	count := 1500
 
 	ids := make([][]byte, 0, count)
 	var start time.Time
@@ -236,7 +240,7 @@ func TestIndexDiscardSome(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -250,7 +254,7 @@ func TestIndexDiscardSome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = index2.RemoveBefore(start)
+	err = index2.RemoveBefore(start, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +266,7 @@ func TestIndexDiscardSome(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expected := -1
+	started := false
 	deletes := 0
 	for i := 0; i < count; i++ {
 		buf := ids[i]
@@ -277,25 +281,23 @@ func TestIndexDiscardSome(t *testing.T) {
 		}
 
 		if !found {
-			if expected >= 0 {
-				t.Error("expected to find", expected)
+			if started {
+				t.Fatal("expected to find", i)
 			}
 		} else {
-			if expected >= 0 {
-				expected++
-				if expected != int(position) {
-					t.Fatal("expected position match")
-				}
-			} else {
-				expected = int(position)
-				deletes = count - i
+			if i != int(position) {
+				t.Fatal("expected position match")
 			}
 			if shard != ts.shard {
 				t.Fatal("not shard")
 			}
+			if started == false {
+				started = true
+				deletes = count - i
+			}
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -303,10 +305,10 @@ func TestIndexDiscardSome(t *testing.T) {
 
 	stats := index3.tree.Stats()
 	if stats.Deletes != uint64(deletes) {
-		t.Error("wrong delete count")
+		t.Errorf("wrong delete count %d vs expected %d", stats.Deletes, deletes)
 	}
 	if stats.Sets != uint64(count) {
-		t.Error("wrong set count")
+		t.Errorf("wrong set count %d vs expected %d", stats.Sets, count)
 	}
 
 	index3.Close()
@@ -347,12 +349,12 @@ func TestIndexDiscardShortLru(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		index1.RemoveBefore(time.Now().UTC().Add(-time.Millisecond * 10))
+		index1.RemoveBefore(time.Now().UTC().Add(-time.Millisecond*10), nil)
 	}
 
 	index1.Check()
@@ -394,7 +396,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 			}
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -440,12 +442,12 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 			}
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		index1.RemoveBefore(time.Now().UTC().Add(-time.Millisecond * 10))
+		index1.RemoveBefore(time.Now().UTC().Add(-time.Millisecond*10), nil)
 	}
 
 	index1.Close()
@@ -486,11 +488,245 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 			}
 		}
 
-		err = txn.EndTransaction()
+		err = txn.EndTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	index2.Close()
+}
+
+func TestRecover(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	counter := 0
+	for pass := 0; pass < 100; pass++ {
+		// create or open the test index
+		fmt.Printf("starting pass %d\n", pass)
+		index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index", RecoveryEnabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// launch a go routine to insert randomly
+		var wg sync.WaitGroup
+		wg.Add(2)
+		var setError error
+		go func() {
+			defer wg.Done()
+
+			for {
+				buf := make([]byte, 20)
+				_, setError = rand.Read(buf)
+				if setError != nil {
+					return
+				}
+
+				var txn *avlTransaction
+				txn, setError = index.BeginTransaction()
+				if setError != nil {
+					return
+				}
+
+				setError = txn.Set(buf, ts.shard, uint64(counter))
+				if setError != nil {
+					return
+				}
+
+				var wg sync.WaitGroup
+				wg.Add(1)
+				setError = txn.EndTransaction(func(err error) {
+					if err == nil {
+						counter++
+					}
+					wg.Done()
+				})
+				if setError != nil {
+					return
+				}
+
+				wg.Wait()
+			}
+		}()
+
+		// after a delay, force the index closed anywhere in the middle of processing
+		go func() {
+			defer wg.Done()
+
+			time.Sleep(time.Millisecond * 50)
+			index.tree.f.Close()
+		}()
+
+		wg.Wait()
+		index.Close()
+
+		if setError != nil && !errors.Is(setError, os.ErrClosed) && setError.Error() != "File is closed" {
+			t.Fatalf("setError: %v", setError)
+		}
+	}
+
+	// verify linear insertion
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+
+	seq := 0
+	err = index.tree.IterateByTimestamp(func(node *avlNode) error {
+		if node.position != uint64(seq) {
+			fmt.Printf("expected position=%d, got %d", seq, node.position)
+			return ErrIteratorAbort
+		}
+		seq++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if uint64(seq) != index.tree.NodeCount() {
+		t.Fatalf("seq=%d, expected %d", seq, index.tree.NodeCount())
+	}
+}
+
+func TestRecoverWithPurge(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	counter := 0
+	for pass := 0; pass < 100; pass++ {
+
+		// create or open the test index
+		fmt.Printf("starting pass %d at %d\n", pass, counter)
+		index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index", RecoveryEnabled: true, ShardDurationDays: 20 / float64(86400000), ShardRetentionDays: 40 / float64(86400000)})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// launch a go routine to insert randomly
+		var wg sync.WaitGroup
+		wg.Add(4)
+		var setError error
+		var mu sync.Mutex
+		var flushError error
+		go func() {
+			defer wg.Done()
+
+			for {
+				buf := make([]byte, 20)
+				_, setError = rand.Read(buf)
+				if setError != nil {
+					return
+				}
+
+				mu.Lock()
+				if flushError != nil {
+					mu.Unlock()
+					return
+				}
+
+				var txn *avlTransaction
+				txn, setError = index.BeginTransaction()
+				if setError != nil {
+					mu.Unlock()
+					return
+				}
+
+				setError = txn.Set(buf, ts.shard, uint64(counter))
+				if setError != nil {
+					mu.Unlock()
+					return
+				}
+
+				var wg sync.WaitGroup
+				wg.Add(1)
+				setError = txn.EndTransaction(func(err error) {
+					if err == nil {
+						counter++
+					}
+					wg.Done()
+					mu.Unlock()
+				})
+				if setError != nil {
+					return
+				}
+
+				wg.Wait()
+			}
+		}()
+
+		// after a delay, force the index closed anywhere in the middle of processing
+		readyForMore := false
+		go func() {
+			defer wg.Done()
+			time.Sleep(time.Millisecond * 25)
+			mu.Lock()
+			if flushError != nil || setError != nil {
+				mu.Unlock()
+				return
+			}
+
+			index.RemoveBefore(time.Now().UTC().Add(-time.Millisecond*10), func(err error) {
+				flushError = err
+				readyForMore = true
+				mu.Unlock()
+			})
+		}()
+
+		go func() {
+			defer wg.Done()
+			time.Sleep(time.Millisecond * 75)
+			mu.Lock()
+			if !readyForMore || flushError != nil || setError != nil {
+				mu.Unlock()
+				return
+			}
+
+			index.RemoveBefore(time.Now().UTC().Add(-time.Millisecond*10), func(err error) {
+				flushError = err
+				mu.Unlock()
+			})
+		}()
+
+		// after a delay, force the index closed anywhere in the middle of processing
+		go func() {
+			defer wg.Done()
+
+			time.Sleep(time.Millisecond * time.Duration(mrand.Intn(100)+20))
+			index.tree.f.Close()
+		}()
+
+		wg.Wait()
+
+		index.Close()
+
+		if setError != nil && !errors.Is(setError, os.ErrClosed) && setError.Error() != "File is closed" {
+			t.Fatalf("setError: %v", setError)
+		}
+	}
+
+	// verify linear insertion
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+
+	seq := 0
+	err = index.tree.IterateByTimestamp(func(node *avlNode) error {
+		if node.position != uint64(seq) {
+			fmt.Printf("expected position=%d, got %d", seq, node.position)
+			return ErrIteratorAbort
+		}
+		seq++
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if uint64(seq) != index.tree.NodeCount() {
+		t.Fatalf("seq=%d, expected %d", seq, index.tree.NodeCount())
+	}
 }

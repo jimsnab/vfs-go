@@ -8,39 +8,43 @@ type (
 )
 
 func (txn *avlTransaction) Set(key []byte, shard, position uint64) (err error) {
-	if err = txn.tree.lock(); err != nil {
-		return
-	}
-	defer txn.tree.unlock()
+	txn.tree.Lock()
+	defer txn.tree.Unlock()
 
-	txn.tree.Set(key, shard, position)
-	return txn.tree.lastError()
+	_, _, err = txn.tree.Set(key, shard, position)
+	return
 }
 
 func (txn *avlTransaction) Get(key []byte) (found bool, shard, position uint64, err error) {
-	if err = txn.tree.lock(); err != nil {
+	txn.tree.Lock()
+	defer txn.tree.Unlock()
+
+	node, err := txn.tree.Find(key)
+	if err != nil {
 		return
 	}
-	defer txn.tree.unlock()
-
-	node := txn.tree.Find(key)
 	if node != nil {
 		found = true
 		shard = node.Shard()
 		position = node.Position()
 	}
 
-	err = txn.tree.lastError()
 	return
 }
 
-func (txn *avlTransaction) EndTransaction() (err error) {
-	if err = txn.tree.lock(); err != nil {
-		return
+func (txn *avlTransaction) EndTransaction(onComplete CommitCompleted) (err error) {
+	err = txn.doEndTransaction(onComplete)
+	if err != nil && onComplete != nil {
+		onComplete(err)
 	}
-	defer txn.tree.unlock()
+	return
+}
 
-	if err = txn.tree.flush(); err != nil {
+func (txn *avlTransaction) doEndTransaction(onComplete CommitCompleted) (err error) {
+	txn.tree.Lock()
+	defer txn.tree.Unlock()
+
+	if err = txn.tree.flush(onComplete); err != nil {
 		return
 	}
 

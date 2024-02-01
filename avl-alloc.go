@@ -1,79 +1,61 @@
 package vfs
 
 import (
-	"io"
 	"time"
 )
 
-func (af *avlTree) loadFreeNode(offset uint64) *freeNodeS {
-	if af.lastError() != nil {
-		return &freeNodeS{}
-	}
-
-	fn, exists := af.freeNodes[offset]
+func (tree *avlTree) loadFreeNode(offset uint64) (node *freeNode, err error) {
+	fn, exists := tree.freeNodes[offset]
 	if !exists {
-		var err error
-		fn, err = af.readFreeNode(offset)
-		if err != nil {
-			af.err.Store(&err)
-			return &freeNodeS{}
+		if fn, err = tree.readFreeNode(offset); err != nil {
+			return
 		}
 
-		af.freeNodes[offset] = fn
+		tree.freeNodes[offset] = fn
 	} else if fn == nil {
 		panic("reclaiming a free node that was already reclaimed")
 	}
 
-	return fn
+	node = fn
+	return
 }
 
-func (af *avlTree) alloc(key []byte, shard, position uint64) (node *avlNode) {
+func (tree *avlTree) alloc(key []byte, shard, position uint64) (node *avlNode, err error) {
 	an := avlNode{
-		tree: af,
+		tree: tree,
 		key:  make([]byte, len(key)),
-	}
-
-	if af.lastError() != nil {
-		node = &an
-		return
 	}
 
 	//
 	// Find some space.
 	//
 
-	offset := af.firstFreeOffset
+	offset := tree.firstFreeOffset
 	if offset != 0 {
 		// reclaim a deleted node
-		reclaimed := af.loadFreeNode(offset)
-		af.firstFreeOffset = reclaimed.NextOffset()
-		af.dirty = true
-		af.originalRaw = reclaimed.originalRaw
+		var reclaimed *freeNode
+		if reclaimed, err = tree.loadFreeNode(offset); err != nil {
+			return
+		}
+		tree.firstFreeOffset = reclaimed.NextOffset()
+		tree.dirty = true
+		an.originalRawNode = reclaimed.originalRawFree
 
-		af.freeNodes[offset] = nil
-		af.freeCount--
+		delete(tree.freeNodes, offset)
+		tree.freeCount--
 		reclaimed.dirty = false
 	} else {
 		// allocate a new node at the end of the file
-		size, err := af.f.Seek(0, io.SeekEnd)
-		if err != nil {
-			af.err.Store(&err)
-			node = &an
-			return
-		}
-		offset = uint64(size)
-
-		if err = af.f.Truncate(size + kRecordSize); err != nil {
-			return
-		}
+		offset = tree.allocatedSize
+		tree.allocatedSize += kRecordSize
 	}
-	af.nodeCount++
+	tree.nodeCount++
 
 	//
 	// Initialize the new node.
 	//
 
-	af.nodeCache[offset] = &an
+	tree.nodeCache[offset] = &an
 	an.nodeDirty()
 	an.offset = offset
 	copy(an.key, key)
@@ -85,97 +67,94 @@ func (af *avlTree) alloc(key []byte, shard, position uint64) (node *avlNode) {
 	// Link the new node in time history.
 	//
 
-	an.prevOffset = af.newestOffset
+	an.prevOffset = tree.newestOffset
 
-	if af.newestOffset == 0 {
-		af.oldestOffset = offset
+	if tree.newestOffset == 0 {
+		tree.oldestOffset = offset
 	} else {
-		prev := af.loadNode(af.newestOffset)
-		prev.SetNext(&an)
+		var prev *avlNode
+		if prev, err = tree.loadNode(tree.newestOffset); err != nil {
+			return
+		}
+		prev.SetNextOffset(offset)
 	}
 
-	af.newestOffset = offset
+	tree.newestOffset = offset
 
-	an.lru = af.allocLru.Add(&an)
+	an.lru = tree.allocLru.Add(&an)
 	node = &an
 	return
 }
 
 // Converts an allocated node into a free node.
-func (an *avlNode) Free() {
-	af := an.tree
-	if af.lastError() != nil {
-		return
-	}
+func (an *avlNode) Free() (err error) {
+	tree := an.tree
 
 	//
 	// Delink from time history and convert to a free node.
 	//
 
 	if an.prevOffset == 0 {
-		af.oldestOffset = an.nextOffset
+		tree.oldestOffset = an.nextOffset
 	} else {
-		prev := an.Prev()
-		prev.SetNext(an.Next())
+		var prev *avlNode
+		if prev, err = tree.loadNode(an.PrevOffset()); err != nil {
+			return
+		}
+		prev.SetNextOffset(an.NextOffset())
 	}
 
 	if an.nextOffset == 0 {
-		af.newestOffset = an.prevOffset
+		tree.newestOffset = an.prevOffset
 	} else {
-		next := an.Next()
-		next.SetPrev(an.Prev())
+		var next *avlNode
+		if next, err = tree.loadNode(an.NextOffset()); err != nil {
+			return
+		}
+		next.SetPrevOffset(an.PrevOffset())
 	}
 
 	if an.dirty {
 		// for the case of set then delete in the same transaction; should be rare
-		for i, n := range af.writtenNodes {
+		for i, n := range tree.writtenNodes {
 			if n == an {
-				af.writtenNodes = append(af.writtenNodes[:i], af.writtenNodes[i+1:]...)
+				tree.writtenNodes = append(tree.writtenNodes[:i], tree.writtenNodes[i+1:]...)
 				break
 			}
 		}
 	}
 
-	fn := &freeNodeS{
-		tree:        an.tree,
-		dirty:       true,
-		originalRaw: an.originalRaw,
-		offset:      an.offset,
-		next:        nil,
-		nextOffset:  af.firstFreeOffset,
+	fn := &freeNode{
+		tree:            an.tree,
+		dirty:           true,
+		originalRawFree: an.originalRawNode,
+		offset:          an.offset,
+		next:            nil,
+		nextOffset:      tree.firstFreeOffset,
 	}
-	af.freeCount++
-	af.freeNodes[fn.offset] = fn
+	tree.freeCount++
+	tree.freeNodes[fn.offset] = fn
 
-	af.nodeCount--
-	af.nodeCache[an.offset] = nil
+	tree.nodeCount--
+	delete(tree.nodeCache, an.offset)
 	an.dirty = false
-	af.allocLru.Remove(an.lru)
+	tree.allocLru.Remove(an.lru)
 
-	af.firstFreeOffset = fn.offset
-	af.dirty = true
+	tree.firstFreeOffset = fn.offset
+	tree.dirty = true
+	return
 }
 
-func (af *avlTree) loadNode(offset uint64) (node *avlNode) {
-	if af == nil {
-		return nil
-	}
-
-	if af.lastError() != nil {
-		return af.zeroNode
-	}
-
+func (tree *avlTree) loadNode(offset uint64) (node *avlNode, err error) {
 	if offset != 0 {
-		an, exists := af.nodeCache[offset]
+		an, exists := tree.nodeCache[offset]
 		if !exists {
-			var err error
-			an, err = af.readAvlNode(offset)
+			an, err = tree.readAvlNode(offset)
 			if err != nil {
-				af.err.Store(&err)
-				return af.zeroNode
+				return
 			}
-			af.nodeCache[offset] = an
-			an.lru = af.allocLru.Add(an)
+			tree.nodeCache[offset] = an
+			an.lru = tree.allocLru.Add(an)
 		} else if an == nil {
 			panic("load of a node that was deleted")
 		} else if an.lru == nil {
