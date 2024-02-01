@@ -1,23 +1,26 @@
 package vfs
 
+import "sync"
+
 type (
 	avlTransaction struct {
+		mu   sync.Mutex
 		ai   *avlIndex
 		tree *avlTree
 	}
 )
 
 func (txn *avlTransaction) Set(key []byte, shard, position uint64) (err error) {
-	txn.tree.Lock()
-	defer txn.tree.Unlock()
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
 
 	_, _, err = txn.tree.Set(key, shard, position)
 	return
 }
 
 func (txn *avlTransaction) Get(key []byte) (found bool, shard, position uint64, err error) {
-	txn.tree.Lock()
-	defer txn.tree.Unlock()
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
 
 	node, err := txn.tree.Find(key)
 	if err != nil {
@@ -33,6 +36,9 @@ func (txn *avlTransaction) Get(key []byte) (found bool, shard, position uint64, 
 }
 
 func (txn *avlTransaction) EndTransaction(onComplete CommitCompleted) (err error) {
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
+
 	err = txn.doEndTransaction(onComplete)
 	if err != nil && onComplete != nil {
 		onComplete(err)
@@ -41,9 +47,6 @@ func (txn *avlTransaction) EndTransaction(onComplete CommitCompleted) (err error
 }
 
 func (txn *avlTransaction) doEndTransaction(onComplete CommitCompleted) (err error) {
-	txn.tree.Lock()
-	defer txn.tree.Unlock()
-
 	if err = txn.tree.flush(onComplete); err != nil {
 		return
 	}

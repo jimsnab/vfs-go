@@ -357,15 +357,12 @@ func (st *store) doPurgeShards(cutoff time.Time, onComplete CommitCompleted) {
 }
 
 func (st *store) Stats() StoreStats {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
 	indexStats := st.ai.Stats()
 
 	return StoreStats{
 		Sets:           indexStats.Sets,
 		Deletes:        indexStats.Deletes,
-		Keys:           st.ai.tree.NodeCount(),
+		Keys:           indexStats.NodeCount,
 		KeysRemoved:    st.keysRemoved,
 		ShardsAccessed: st.shardsAccessed,
 		ShardsRemoved:  st.shardsRemoved,

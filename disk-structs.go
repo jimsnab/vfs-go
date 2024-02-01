@@ -114,12 +114,12 @@ func (tree *avlTree) readAvlHeader() (err error) {
 	tree.rootOffset = hdr.RootOffset
 	tree.oldestOffset = hdr.Oldest
 	tree.newestOffset = hdr.Newest
-	tree.nodeCount = hdr.NodeCount
-	tree.freeCount = hdr.FreeCount
-	tree.setCount = hdr.SetCount
-	tree.deleteCount = hdr.DeleteCount
+	tree.nodeCount.Store(int64(hdr.NodeCount))
+	tree.freeCount.Store(int64(hdr.FreeCount))
+	tree.setCount.Store(hdr.SetCount)
+	tree.deleteCount.Store(hdr.DeleteCount)
 
-	totalRecords := 1 + tree.nodeCount + tree.freeCount
+	totalRecords := uint64(1 + tree.nodeCount.Load() + tree.freeCount.Load())
 	totalSize := totalRecords * kRecordSize
 	if tree.committedSize != totalSize {
 		err = fmt.Errorf("committed size %d != size of records %d", tree.committedSize, totalSize)
@@ -141,10 +141,10 @@ func (tree *avlTree) write() (err error) {
 		RootOffset:      tree.rootOffset,
 		Oldest:          tree.oldestOffset,
 		Newest:          tree.newestOffset,
-		NodeCount:       tree.nodeCount,
-		FreeCount:       tree.freeCount,
-		SetCount:        tree.setCount,
-		DeleteCount:     tree.deleteCount,
+		NodeCount:       uint64(tree.nodeCount.Load()),
+		FreeCount:       uint64(tree.freeCount.Load()),
+		SetCount:        tree.setCount.Load(),
+		DeleteCount:     tree.deleteCount.Load(),
 	}
 
 	var record bytes.Buffer

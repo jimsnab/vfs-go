@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"sync"
+	"sync/atomic"
 
 	"github.com/spf13/afero"
 )
@@ -15,7 +16,6 @@ type (
 	AvlIterator func(node *avlNode) error
 
 	avlTree struct {
-		sync.Mutex
 		cfg             *VfsConfig
 		f               afero.File
 		rf              afero.File
@@ -30,11 +30,11 @@ type (
 		writtenNodes    []*avlNode
 		nodeCache       map[uint64]*avlNode
 		allocLru        *lruStack[*avlNode]
-		nodeCount       uint64
+		nodeCount       atomic.Int64
 		freeNodes       map[uint64]*freeNode
-		freeCount       uint64
-		setCount        uint64
-		deleteCount     uint64
+		freeCount       atomic.Int64
+		setCount        atomic.Uint64
+		deleteCount     atomic.Uint64
 		printType       testPrintType
 		dt1sync         sync.WaitGroup
 		dt2sync         sync.WaitGroup
@@ -71,8 +71,10 @@ type (
 	}
 
 	avlTreeStats struct {
-		Sets    uint64
-		Deletes uint64
+		NodeCount uint64
+		FreeCount uint64
+		Sets      uint64
+		Deletes   uint64
 	}
 
 	testPrintType int
@@ -182,18 +184,12 @@ func (tree *avlTree) collectNode(an *avlNode) bool {
 	return false
 }
 
-func (tree *avlTree) NodeCount() uint64 {
-	return tree.nodeCount
-}
-
-func (tree *avlTree) FreeCount() uint64 {
-	return tree.freeCount
-}
-
 func (tree *avlTree) Stats() avlTreeStats {
 	return avlTreeStats{
-		Sets:    tree.setCount,
-		Deletes: tree.deleteCount,
+		NodeCount: uint64(tree.nodeCount.Load()),
+		FreeCount: uint64(tree.freeCount.Load()),
+		Sets:      tree.setCount.Load(),
+		Deletes:   tree.deleteCount.Load(),
 	}
 }
 

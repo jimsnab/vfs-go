@@ -70,7 +70,7 @@ func (tree *avlTree) Set(key []byte, shard, position uint64) (node *avlNode, add
 		return
 	}
 	tree.setRootOffset(rootOffset)
-	tree.setCount++
+	tree.setCount.Add(1)
 
 	node = op.leaf
 	added = op.added
@@ -105,7 +105,7 @@ func (tree *avlTree) Delete(key []byte) (wasDeleted bool, err error) {
 		if err = op.leaf.Free(); err != nil {
 			return
 		}
-		tree.deleteCount++
+		tree.deleteCount.Add(1)
 		wasDeleted = true
 	}
 

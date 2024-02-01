@@ -42,14 +42,14 @@ func (tree *avlTree) alloc(key []byte, shard, position uint64) (node *avlNode, e
 		an.originalRawNode = reclaimed.originalRawFree
 
 		delete(tree.freeNodes, offset)
-		tree.freeCount--
+		tree.freeCount.Add(-1)
 		reclaimed.dirty = false
 	} else {
 		// allocate a new node at the end of the file
 		offset = tree.allocatedSize
 		tree.allocatedSize += kRecordSize
 	}
-	tree.nodeCount++
+	tree.nodeCount.Add(1)
 
 	//
 	// Initialize the new node.
@@ -132,10 +132,10 @@ func (an *avlNode) Free() (err error) {
 		next:            nil,
 		nextOffset:      tree.firstFreeOffset,
 	}
-	tree.freeCount++
+	tree.freeCount.Add(1)
 	tree.freeNodes[fn.offset] = fn
 
-	tree.nodeCount--
+	tree.nodeCount.Add(-1)
 	delete(tree.nodeCache, an.offset)
 	an.dirty = false
 	tree.allocLru.Remove(an.lru)

@@ -586,8 +586,9 @@ func TestRecover(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if uint64(seq) != index.tree.NodeCount() {
-		t.Fatalf("seq=%d, expected %d", seq, index.tree.NodeCount())
+	stats := index.Stats()
+	if uint64(seq) != stats.NodeCount {
+		t.Fatalf("seq=%d, expected %d", seq, stats.NodeCount)
 	}
 }
 
@@ -639,20 +640,22 @@ func TestRecoverWithPurge(t *testing.T) {
 					return
 				}
 
-				var wg sync.WaitGroup
-				wg.Add(1)
+				var wg2 sync.WaitGroup
+				wg2.Add(1)
 				setError = txn.EndTransaction(func(err error) {
+					index.Stats() // get stats in completion function to ensure no mutex deadlock
 					if err == nil {
 						counter++
 					}
-					wg.Done()
+					wg2.Done()
 					mu.Unlock()
 				})
+
+				wg2.Wait() // completion function must complete before this pass is done
+
 				if setError != nil {
 					return
 				}
-
-				wg.Wait()
 			}
 		}()
 
@@ -667,10 +670,12 @@ func TestRecoverWithPurge(t *testing.T) {
 				return
 			}
 
+			wg.Add(1)
 			index.RemoveBefore(time.Now().UTC().Add(-time.Millisecond*10), func(err error) {
 				flushError = err
 				readyForMore = true
 				mu.Unlock()
+				wg.Done()
 			})
 		}()
 
@@ -683,9 +688,11 @@ func TestRecoverWithPurge(t *testing.T) {
 				return
 			}
 
+			wg.Add(1)
 			index.RemoveBefore(time.Now().UTC().Add(-time.Millisecond*10), func(err error) {
 				flushError = err
 				mu.Unlock()
+				wg.Done()
 			})
 		}()
 
@@ -715,7 +722,9 @@ func TestRecoverWithPurge(t *testing.T) {
 
 	seq := 0
 	err = index.tree.IterateByTimestamp(func(node *avlNode) error {
-		if node.position != uint64(seq) {
+		if seq == 0 {
+			seq = int(node.position)
+		} else if node.position != uint64(seq) {
 			fmt.Printf("expected position=%d, got %d", seq, node.position)
 			return ErrIteratorAbort
 		}
@@ -726,7 +735,12 @@ func TestRecoverWithPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if uint64(seq) != index.tree.NodeCount() {
-		t.Fatalf("seq=%d, expected %d", seq, index.tree.NodeCount())
+	stats := index.Stats()
+	if uint64(seq) != stats.Sets {
+		t.Fatalf("seq=%d, expected %d", seq, stats.Sets)
+	}
+
+	if stats.Sets-100 <= stats.NodeCount {
+		t.Fatal("expected some deleted nodes")
 	}
 }
