@@ -188,6 +188,8 @@ func TestStoreAndGetMany(t *testing.T) {
 	retrievals := 0
 	purges := 0
 	var pending atomic.Int32
+	completions := map[int]struct{}{}
+	var completionsMu sync.Mutex
 
 	for i := 0; i < count; i++ {
 		if fatal.Load() != nil {
@@ -265,6 +267,7 @@ func TestStoreAndGetMany(t *testing.T) {
 
 				mu.Lock()
 				records := make([]StoreRecord, 0, 48)
+				round := recordNumber
 
 				setSize := mrand.Intn(8) + 8
 				for i := 0; i < setSize; i++ {
@@ -283,7 +286,18 @@ func TestStoreAndGetMany(t *testing.T) {
 				}
 				mu.Unlock()
 
-				if err = st.StoreContent(records, nil); err != nil {
+				if err = st.StoreContent(records, func(err error) {
+					// ensure completion routine is called only once
+					completionsMu.Lock()
+					defer completionsMu.Unlock()
+
+					if _, found := completions[round]; found {
+						fail := errors.New("already completed")
+						fatal.Store(&fail)
+					} else {
+						completions[round] = struct{}{}
+					}
+				}); err != nil {
 					fatal.Store(&err)
 					return
 				}
