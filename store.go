@@ -33,6 +33,9 @@ type (
 		// The store metrics
 		Stats() StoreStats
 
+		// Ensures disk files are synchronized
+		Sync() error
+
 		// Close I/O.
 		Close() error
 	}
@@ -367,6 +370,25 @@ func (st *store) Stats() StoreStats {
 		ShardsAccessed: st.shardsAccessed,
 		ShardsRemoved:  st.shardsRemoved,
 	}
+}
+
+func (st *store) Sync() (err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	for _, f := range st.shards {
+		terr := f.Sync()
+		if terr != nil && err == nil {
+			err = terr
+		}
+	}
+
+	terr := st.ai.Sync()
+	if terr != nil && err == nil {
+		err = terr
+	}
+
+	return
 }
 
 func (st *store) Close() (err error) {

@@ -33,6 +33,10 @@ func newIndex(cfg *VfsConfig) (index *avlIndex, err error) {
 	return
 }
 
+func (ai *avlIndex) Sync() (err error) {
+	return ai.tree.Sync()
+}
+
 func (ai *avlIndex) Close() (err error) {
 	ai.tree.dt1sync.Wait()
 	ai.tree.dt2sync.Wait()

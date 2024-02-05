@@ -157,6 +157,21 @@ func newAvlTree(cfg *VfsConfig) (tree *avlTree, err error) {
 	return
 }
 
+func (tree *avlTree) Sync() (err error) {
+	if tree.closed {
+		err = os.ErrClosed
+		return
+	}
+
+	err1 := tree.f.Sync()
+	err2 := tree.rf.Sync()
+
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}
+
 func (tree *avlTree) Close() (err error) {
 	if tree.closed {
 		err = os.ErrClosed
