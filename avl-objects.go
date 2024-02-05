@@ -93,8 +93,8 @@ const (
 	testPtPosition
 )
 
-func newAvlTree(cfg *VfsConfig) (tree *avlTree, err error) {
-	filePath := path.Join(cfg.IndexDir, fmt.Sprintf("%s.dt1", cfg.BaseName))
+func newAvlTree(cfg *VfsConfig, keyGroup string) (tree *avlTree, err error) {
+	filePath := path.Join(cfg.IndexDir, fmt.Sprintf("%s.%s.dt1", cfg.BaseName, keyGroup))
 	f, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		err = fmt.Errorf("error opening index file %s: %v", filePath, err)
@@ -105,7 +105,7 @@ func newAvlTree(cfg *VfsConfig) (tree *avlTree, err error) {
 		return
 	}
 
-	filePath = path.Join(cfg.IndexDir, fmt.Sprintf("%s.dt2", cfg.BaseName))
+	filePath = path.Join(cfg.IndexDir, fmt.Sprintf("%s.%s.dt2", cfg.BaseName, keyGroup))
 	rf, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		f.Close()

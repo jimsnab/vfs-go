@@ -23,7 +23,7 @@ type (
 		StoreContent(records []StoreRecord, onComplete CommitCompleted) (err error)
 
 		// Retrieve a specific record
-		RetrieveContent(key []byte) (content []byte, err error)
+		RetrieveContent(keyGroup string, key []byte) (content []byte, err error)
 
 		// Discard all records that fall out of the retention period specified in the config.
 		// The caller can optionally provide a callback that is invoked after the disk
@@ -41,8 +41,9 @@ type (
 	}
 
 	StoreRecord struct {
-		Key     []byte
-		Content []byte
+		KeyGroup string
+		Key      []byte
+		Content  []byte
 	}
 
 	StoreStats struct {
@@ -167,11 +168,12 @@ func (st *store) purgeShards(cutoff time.Time) (err error) {
 		}
 
 		fileName := file.Name()
-		if !strings.HasPrefix(fileName, st.cfg.BaseName+".") {
+		prefix := st.cfg.BaseName + "."
+		if !strings.HasPrefix(fileName, prefix) {
 			continue
 		}
 
-		afterBase := fileName[len(st.cfg.BaseName)+1:]
+		afterBase := fileName[len(prefix):]
 		cutPoint := strings.Index(afterBase, ".")
 		if cutPoint <= 0 {
 			continue
@@ -242,7 +244,7 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 			return
 		}
 
-		if txn.Set(record.Key, shard, uint64(offset)); err != nil {
+		if txn.Set(record.KeyGroup, record.Key, shard, uint64(offset)); err != nil {
 			return
 		}
 	}
@@ -267,7 +269,7 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 	return
 }
 
-func (st *store) RetrieveContent(key []byte) (content []byte, err error) {
+func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -276,7 +278,7 @@ func (st *store) RetrieveContent(key []byte) (content []byte, err error) {
 		return
 	}
 
-	found, shard, position, err := txn.Get(key)
+	found, shard, position, err := txn.Get(keyGroup, key)
 	if err != nil {
 		return
 	}
@@ -339,13 +341,13 @@ func (st *store) doPurgeOld(onComplete CommitCompleted) (err error) {
 
 	cutoff := time.Now().UTC().Add(-(time.Duration(time.Hour * 24 * time.Duration(st.cfg.ShardRetentionDays))))
 
-	before := st.ai.tree.Stats()
+	before := st.ai.Stats()
 
 	if err = st.ai.doRemoveBefore(cutoff, func(err error) { st.doPurgeShards(cutoff, onComplete) }); err != nil {
 		return
 	}
 
-	after := st.ai.tree.Stats()
+	after := st.ai.Stats()
 	st.keysRemoved += after.Deletes - before.Deletes
 
 	return nil

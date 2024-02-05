@@ -32,7 +32,7 @@ func testInitialize(t *testing.T, makeAvlTree bool) (ts *testState) {
 	}
 
 	if makeAvlTree {
-		ts.tree, err = newAvlTree(&VfsConfig{IndexDir: ts.testDir, BaseName: "test"})
+		ts.tree, err = newAvlTree(&VfsConfig{IndexDir: ts.testDir, BaseName: "test"}, kTestKeyGroup)
 		if err != nil {
 			t.Fatal(err)
 		}

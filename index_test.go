@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/afero"
 )
 
+const kTestKeyGroup = "test"
+
 func benchmarkInitialize(b *testing.B) (ts *testState) {
 	ts = &testState{}
 	ts.originalFs = AppFs
@@ -57,7 +59,7 @@ func TestIndexWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.Set(buf, ts.shard, uint64(i))
+		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -75,7 +77,7 @@ func TestIndexWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(buf)
+		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,7 +124,7 @@ func TestIndexWrites2(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.Set(buf, ts.shard, uint64(i))
+		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,7 +149,7 @@ func TestIndexWrites2(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(buf)
+		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -193,7 +195,7 @@ func BenchmarkIndex(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		err = txn.Set(buf, ts.shard, uint64(i))
+		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -235,7 +237,7 @@ func TestIndexDiscardSome(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.Set(buf, ts.shard, uint64(i))
+		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -275,7 +277,7 @@ func TestIndexDiscardSome(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(buf)
+		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -303,7 +305,7 @@ func TestIndexDiscardSome(t *testing.T) {
 		}
 	}
 
-	stats := index3.tree.Stats()
+	stats := index3.Stats()
 	if stats.Deletes != uint64(deletes) {
 		t.Errorf("wrong delete count %d vs expected %d", stats.Deletes, deletes)
 	}
@@ -344,7 +346,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.Set(buf, ts.shard, uint64(i))
+		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -373,7 +375,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(buf)
+		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -436,7 +438,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 			}
 			ids = append(ids, buf)
 
-			err = txn.Set(buf, ts.shard, uint64(i))
+			err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -465,7 +467,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(buf)
+		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -529,7 +531,7 @@ func TestRecover(t *testing.T) {
 					return
 				}
 
-				setError = txn.Set(buf, ts.shard, uint64(counter))
+				setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter))
 				if setError != nil {
 					return
 				}
@@ -555,7 +557,9 @@ func TestRecover(t *testing.T) {
 			defer wg.Done()
 
 			time.Sleep(time.Millisecond * 50)
-			index.tree.f.Close()
+			for _, tree := range index.trees {
+				tree.f.Close()
+			}
 		}()
 
 		wg.Wait()
@@ -573,8 +577,13 @@ func TestRecover(t *testing.T) {
 	}
 	defer index.Close()
 
+	tree, err := index.getTree(kTestKeyGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	seq := 0
-	err = index.tree.IterateByTimestamp(func(node *avlNode) error {
+	err = tree.IterateByTimestamp(func(node *avlNode) error {
 		if node.position != uint64(seq) {
 			fmt.Printf("expected position=%d, got %d", seq, node.position)
 			return ErrIteratorAbort
@@ -634,7 +643,7 @@ func TestRecoverWithPurge(t *testing.T) {
 					return
 				}
 
-				setError = txn.Set(buf, ts.shard, uint64(counter))
+				setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter))
 				if setError != nil {
 					mu.Unlock()
 					return
@@ -701,7 +710,9 @@ func TestRecoverWithPurge(t *testing.T) {
 			defer wg.Done()
 
 			time.Sleep(time.Millisecond * time.Duration(mrand.Intn(100)+20))
-			index.tree.f.Close()
+			for _, tree := range index.trees {
+				tree.f.Close()
+			}
 		}()
 
 		wg.Wait()
@@ -720,8 +731,13 @@ func TestRecoverWithPurge(t *testing.T) {
 	}
 	defer index.Close()
 
+	tree, err := index.getTree(kTestKeyGroup)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	seq := 0
-	err = index.tree.IterateByTimestamp(func(node *avlNode) error {
+	err = tree.IterateByTimestamp(func(node *avlNode) error {
 		if seq == 0 {
 			seq = int(node.position)
 		} else if node.position != uint64(seq) {
