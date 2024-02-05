@@ -14,8 +14,11 @@ type (
 // inner function - does not call onComplete when it returns non nil err
 func (tree *avlTree) flush(onComplete CommitCompleted) (err error) {
 	// back up everything
+	hasNew := (tree.allocatedSize != tree.committedSize)
 	hasBackup := false
+
 	if tree.cfg.RecoveryEnabled {
+		hasBackup = hasNew
 
 		// ensure the last recovery file change completed
 		tree.dt2sync.Wait()
@@ -70,7 +73,7 @@ func (tree *avlTree) flush(onComplete CommitCompleted) (err error) {
 	tree.dt1sync.Wait()
 
 	// update the commit file size
-	if tree.allocatedSize != tree.committedSize {
+	if hasNew {
 		tree.committedSize = tree.allocatedSize
 		tree.dirty = true
 		if err = tree.f.Truncate(int64(tree.committedSize)); err != nil {
