@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"math/rand"
+	mrand "math/rand"
 	"testing"
 
-	"github.com/spf13/afero"
+	"github.com/jimsnab/afero"
 )
 
 type (
@@ -32,7 +32,7 @@ func testInitialize(t *testing.T, makeAvlTree bool) (ts *testState) {
 	}
 
 	if makeAvlTree {
-		ts.tree, err = newAvlTree(&VfsConfig{IndexDir: ts.testDir, BaseName: "test"}, kTestKeyGroup)
+		ts.tree, err = newAvlTree(&VfsConfig{IndexDir: ts.testDir, BaseName: "test"}, kTestKeyGroup, "dt1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,8 +41,8 @@ func testInitialize(t *testing.T, makeAvlTree bool) (ts *testState) {
 		})
 	}
 
-	ts.shard = rand.Uint64()
-	ts.position = rand.Uint64()
+	ts.shard = mrand.Uint64()
+	ts.position = mrand.Uint64()
 
 	t.Cleanup(func() {
 		AppFs = ts.originalFs
@@ -715,7 +715,7 @@ func testInsertDelete(t *testing.T, worst int) (out []int) {
 		if i%3 > 0 {
 			// Find
 			if len(numbers) > 0 {
-				target := rand.Intn(len(numbers))
+				target := mrand.Intn(len(numbers))
 				targetNumber := numbers[target]
 				_, isset := table[targetNumber]
 				if i%3 == 1 {
@@ -743,14 +743,14 @@ func testInsertDelete(t *testing.T, worst int) (out []int) {
 			continue
 		}
 
-		op := rand.Intn(4)
+		op := mrand.Intn(4)
 		var v int
 		if op == 0 && len(numbers) > 0 {
-			n := rand.Intn(len(numbers))
+			n := mrand.Intn(len(numbers))
 			v = -numbers[n]
 			numbers = append(numbers[0:n], numbers[n+1:]...)
 		} else {
-			v = rand.Intn(8192) + 1
+			v = mrand.Intn(8192) + 1
 		}
 
 		ops++

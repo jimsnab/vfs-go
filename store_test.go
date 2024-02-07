@@ -19,7 +19,7 @@ func TestStoreAndGetOne(t *testing.T) {
 		IndexDir:           ts.testDir,
 		DataDir:            ts.testDir,
 		BaseName:           "the.test",
-		SyncTask:           true,
+		Sync:               true,
 		ShardDurationDays:  0.03,
 		ShardRetentionDays: 0.06,
 		RecoveryEnabled:    true,
@@ -36,7 +36,7 @@ func TestStoreAndGetOne(t *testing.T) {
 	data := make([]byte, datalen)
 	rand.Read(data)
 
-	records := []StoreRecord{{kTestKeyGroup, key, data}}
+	records := []StoreRecord{{kTestKeyGroup, key, data, nil}}
 
 	if err = st.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func TestStoreAndGetOneSet(t *testing.T) {
 		IndexDir:           ts.testDir,
 		DataDir:            ts.testDir,
 		BaseName:           "the.test",
-		SyncTask:           true,
+		Sync:               true,
 		ShardDurationDays:  0.03,
 		ShardRetentionDays: 0.06,
 		RecoveryEnabled:    true,
@@ -85,7 +85,7 @@ func TestStoreAndGetOneSet(t *testing.T) {
 		data := make([]byte, datalen)
 		rand.Read(data)
 
-		records = append(records, StoreRecord{kTestKeyGroup, key, data})
+		records = append(records, StoreRecord{kTestKeyGroup, key, data, nil})
 	}
 
 	if err = st.StoreContent(records, nil); err != nil {
@@ -115,7 +115,7 @@ func TestStoreAndGet1000(t *testing.T) {
 		IndexDir:           ts.testDir,
 		DataDir:            ts.testDir,
 		BaseName:           "the.test",
-		SyncTask:           true,
+		Sync:               true,
 		ShardDurationDays:  0.03,
 		ShardRetentionDays: 0.06,
 		RecoveryEnabled:    true,
@@ -134,7 +134,7 @@ func TestStoreAndGet1000(t *testing.T) {
 		data := make([]byte, datalen)
 		rand.Read(data)
 
-		records := []StoreRecord{{kTestKeyGroup, key, data}}
+		records := []StoreRecord{{kTestKeyGroup, key, data, nil}}
 
 		if err = st.StoreContent(records, nil); err != nil {
 			t.Fatal(err)
@@ -163,7 +163,7 @@ func TestStoreAndGetMany(t *testing.T) {
 		IndexDir:           ts.testDir,
 		DataDir:            ts.testDir,
 		BaseName:           "the.test",
-		SyncTask:           true,
+		Sync:               true,
 		ShardDurationDays:  0.000002315,
 		ShardRetentionDays: 0.00000463,
 		RecoveryEnabled:    true,
@@ -277,7 +277,7 @@ func TestStoreAndGetMany(t *testing.T) {
 					data := make([]byte, datalen)
 					rand.Read(data)
 
-					records = append(records, StoreRecord{kTestKeyGroup, key, data})
+					records = append(records, StoreRecord{kTestKeyGroup, key, data, nil})
 
 					keyStr := hex.EncodeToString(key)
 					allKeys[recordNumber] = keyStr
@@ -286,7 +286,11 @@ func TestStoreAndGetMany(t *testing.T) {
 				}
 				mu.Unlock()
 
-				if err = st.StoreContent(records, func(err error) {
+				var swg sync.WaitGroup
+				swg.Add(1)
+				err = st.StoreContent(records, func(err error) {
+					defer swg.Done()
+
 					// ensure completion routine is called only once
 					completionsMu.Lock()
 					defer completionsMu.Unlock()
@@ -297,10 +301,14 @@ func TestStoreAndGetMany(t *testing.T) {
 					} else {
 						completions[round] = struct{}{}
 					}
-				}); err != nil {
+				})
+
+				if err != nil {
 					fatal.Store(&err)
 					return
 				}
+
+				swg.Wait()
 			}()
 		} else {
 			// block to limit the go routine growth
@@ -335,10 +343,11 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 		IndexDir:           ts.testDir,
 		DataDir:            ts.testDir,
 		BaseName:           "the.test",
-		SyncTask:           true,
+		Sync:               true,
 		ShardDurationDays:  0.000002315,
 		ShardRetentionDays: 0.00000463,
 		RecoveryEnabled:    true,
+		ReferenceTables:    []string{"A", "B"},
 	}
 
 	fmt.Printf("shard life: %d ms\n", uint64(24*60*60*1000*cfg.ShardDurationDays))
@@ -351,7 +360,9 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 	defer st.Close()
 
 	allKeys := map[int]string{}
-	allData := map[int][]byte{}
+	allData := map[[20]byte][]byte{}
+	allRefKeysA := [][]byte{}
+	allRefKeysB := [][]byte{}
 
 	var fatal atomic.Pointer[error]
 	var mu sync.Mutex
@@ -362,6 +373,8 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 	var pending atomic.Int32
 	completions := map[int]struct{}{}
 	var completionsMu sync.Mutex
+	removedKeys := map[[20]byte]struct{}{}
+	removedRefKeys := map[[20]byte]struct{}{}
 
 	for i := 0; i < count; i++ {
 		if fatal.Load() != nil {
@@ -398,36 +411,99 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 				defer pending.Add(-1)
 
 				mu.Lock()
-				if recordNumber > 0 {
-					idx := mrand.Intn(recordNumber)
-					keyStr := allKeys[idx]
-					key, err := hex.DecodeString(keyStr)
-					if err != nil {
-						mu.Unlock()
-						fatal.Store(&err)
-						return
+				if recordNumber == 0 {
+					mu.Unlock()
+				} else {
+					var content []byte
+					var refKeys [][]byte
+					var expectedContent []byte
+					var expectedRef bool
+					var key []byte
+					var refKey []byte
+					var refKeyType string
+
+					subop := mrand.Intn(100)
+					if subop < 50 {
+						// get a random document
+						idx := mrand.Intn(recordNumber)
+						keyStr := allKeys[idx]
+						key, err = hex.DecodeString(keyStr)
+						if err != nil {
+							fatal.Store(&err)
+							return
+						}
+						expectedContent = allData[[20]byte(key)]
+					} else if subop < 54 {
+						// look up a random missing ref key
+						refKeyType = "A"
+						refKey = make([]byte, 20)
+						rand.Read(refKey)
+					} else if subop < 74 && len(allRefKeysA) > 0 {
+						// get a document from a random ref key A
+						refKeyType = "A"
+						refKey = allRefKeysA[mrand.Intn(len(allRefKeysA))]
+						expectedRef = true
+					} else if subop < 94 && len(allRefKeysB) > 0 {
+						// get a document from a random ref key B
+						refKeyType = "B"
+						refKey = allRefKeysB[mrand.Intn(len(allRefKeysB))]
+						expectedRef = true
+					} else {
+						// look up a random non existent key
+						key = make([]byte, 20)
+						rand.Read(key)
 					}
 
-					data := allData[idx]
+					err = func() (failure error) {
+						if refKey != nil {
+							if refKeys, failure = st.RetrieveReferences(refKeyType, keyGroupFromKey(refKey), refKey); failure != nil {
+								return
+							}
+
+							if len(refKeys) != 0 && !expectedRef {
+								return errors.New("didn't expect to find reference")
+							}
+
+							if expectedRef {
+								if len(refKeys) == 0 {
+									_, removed := removedRefKeys[[20]byte(refKey)]
+									if !removed {
+										return errors.New("expected a reference key")
+									}
+								} else {
+									key = refKeys[mrand.Intn(len(refKeys))]
+									expectedContent = allData[[20]byte(key)]
+								}
+							}
+						}
+						return
+					}()
+
 					mu.Unlock()
 
-					content, err := st.RetrieveContent(keyGroupFromKey(key), key)
 					if err != nil {
 						fatal.Store(&err)
 						return
 					}
 
-					// old content is removed
-					if content != nil {
-						if !bytes.Equal(data, content) {
+					if key != nil {
+						content, err = st.RetrieveContent(keyGroupFromKey(key), key)
+						if err != nil {
+							fatal.Store(&err)
+							return
+						}
+					}
+
+					if !bytes.Equal(expectedContent, content) {
+						// old content is removed
+						_, removed := removedKeys[[20]byte(key)]
+						if len(content) > 0 || (key != nil && !removed) {
 							err := errors.New("content not equal")
 							fatal.Store(&err)
 							return
 						}
-						retrievals++
 					}
-				} else {
-					mu.Unlock()
+					retrievals++
 				}
 			}()
 		} else if op == 1 {
@@ -443,22 +519,48 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 
 				setSize := mrand.Intn(8) + 8
 				for i := 0; i < setSize; i++ {
+					// make a random document
 					key := make([]byte, 20)
 					rand.Read(key)
 					datalen := mrand.Intn(256) + 1
 					data := make([]byte, datalen)
 					rand.Read(data)
 
-					records = append(records, StoreRecord{keyGroupFromKey(key), key, data})
+					// make two random reference keys
+					refKeys := map[string]StoreReference{}
+					if mrand.Intn(10) > 3 {
+						if len(allRefKeysA) == 0 || mrand.Intn(10) > 3 {
+							ref1 := make([]byte, 20)
+							rand.Read(ref1)
+							allRefKeysA = append(allRefKeysA, ref1)
+							refKeys["A"] = StoreReference{keyGroupFromKey(ref1), ref1}
+						} else {
+							ref1 := allRefKeysA[mrand.Intn(len(allRefKeysA))]
+							refKeys["A"] = StoreReference{keyGroupFromKey(ref1), ref1}
+						}
+					}
+					if mrand.Intn(10) > 3 {
+						if len(allRefKeysB) == 0 || mrand.Intn(10) > 3 {
+							ref2 := make([]byte, 20)
+							rand.Read(ref2)
+							allRefKeysB = append(allRefKeysB, ref2)
+							refKeys["B"] = StoreReference{keyGroupFromKey(ref2), ref2}
+						} else {
+							ref2 := allRefKeysB[mrand.Intn(len(allRefKeysB))]
+							refKeys["B"] = StoreReference{keyGroupFromKey(ref2), ref2}
+						}
+					}
+
+					records = append(records, StoreRecord{keyGroupFromKey(key), key, data, refKeys})
 
 					keyStr := hex.EncodeToString(key)
 					allKeys[recordNumber] = keyStr
-					allData[recordNumber] = data
+					allData[[20]byte(key)] = data
 					recordNumber++
 				}
 				mu.Unlock()
 
-				if err = st.StoreContent(records, func(err error) {
+				err = st.StoreContent(records, func(failure error) {
 					// ensure completion routine is called only once
 					completionsMu.Lock()
 					defer completionsMu.Unlock()
@@ -469,15 +571,25 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 					} else {
 						completions[round] = struct{}{}
 					}
-				}); err != nil {
+
+					if err == nil {
+						err = failure
+					}
+				})
+				if err != nil {
 					fatal.Store(&err)
 					return
 				}
 			}()
 		} else {
-			// block to limit the go routine growth
+			p := st.(*store)
+			p.ai.removed = removedKeys
+			for _, refTable := range p.refTables {
+				refTable.index.removed = removedRefKeys
+			}
+
 			if err = st.PurgeOld(nil); err != nil {
-				t.Fatal(err)
+				t.Fatal(&err)
 				return
 			}
 			purges++

@@ -9,7 +9,15 @@ type (
 	avlTransaction struct {
 		mu      sync.Mutex
 		ai      *avlIndex
+		ownedTm *transactionManager
 		touched map[string]struct{}
+	}
+
+	avlTransactionResolver struct {
+		resolved  atomic.Bool
+		tree      *avlTree
+		keyGroup  string
+		hasBackup bool
 	}
 )
 
@@ -49,43 +57,49 @@ func (txn *avlTransaction) Get(keyGroup string, key []byte) (found bool, shard, 
 	return
 }
 
-func (txn *avlTransaction) EndTransaction(onComplete CommitCompleted) (err error) {
+func (txn *avlTransaction) EndTransaction() (err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
-
-	err = txn.doEndTransaction(onComplete)
-	if err != nil && onComplete != nil {
-		onComplete(err)
+	if txn.ownedTm != nil {
+		// this transaction owns a transaction manager - call resolve
+		err = txn.ownedTm.Resolve(nil)
 	}
 	return
 }
 
-func (txn *avlTransaction) partiallyComplete(refs *atomic.Int32, onComplete CommitCompleted, failure error) {
-	if refs.Add(-1) == 0 {
-		if onComplete != nil {
-			onComplete(failure)
+func (txn *avlTransaction) Register(tc *transactionCommit) (err error) {
+	if len(txn.touched) > 0 {
+		for keyGroup := range txn.touched {
+			atr := avlTransactionResolver{
+				keyGroup: keyGroup,
+			}
+
+			atr.tree, err = txn.ai.getTree(keyGroup)
+			if err != nil {
+				return
+			}
+
+			tc.Bind(&atr)
 		}
 	}
+	return
 }
 
-func (txn *avlTransaction) doEndTransaction(onComplete CommitCompleted) (err error) {
-	var refs atomic.Int32
-
-	refs.Add(int32(len(txn.touched)))
-	for keyGroup := range txn.touched {
-		var tree *avlTree
-		if tree, err = txn.ai.getTree(keyGroup); err != nil {
-			return
-		}
-
-		err = tree.flush(func(err error) {
-			txn.partiallyComplete(&refs, onComplete, err)
-		})
-		if err != nil {
-			return
-		}
-	}
-
+func (txn *avlTransaction) Detach() {
+	txn.ai.mu.Lock()
 	txn.ai.txn = nil
+	txn.ai.mu.Unlock()
+}
+
+func (resolver *avlTransactionResolver) Flush() (err error) {
+	// BUGBUG
+	if resolver.resolved.Swap(true) {
+		panic("already resolved")
+	}
+	resolver.hasBackup, err = resolver.tree.flush()
 	return
+}
+
+func (resolver *avlTransactionResolver) Commit() (err error) {
+	return resolver.tree.commit(resolver.hasBackup)
 }

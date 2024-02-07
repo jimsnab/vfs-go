@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/spf13/afero"
+	"github.com/jimsnab/afero"
 )
 
 type (
@@ -25,9 +24,13 @@ type (
 		// Retrieve a specific record
 		RetrieveContent(keyGroup string, key []byte) (content []byte, err error)
 
+		// Retrieve the referenced keys from a value key of type 'name'
+		RetrieveReferences(name, keyGroup string, valueKey []byte) (refKeys [][]byte, err error)
+
 		// Discard all records that fall out of the retention period specified in the config.
 		// The caller can optionally provide a callback that is invoked after the disk
-		// is synchronized.
+		// is synchronized. If onComplete is nil, the function blocks until the deletion
+		// is complete.
 		PurgeOld(onComplete CommitCompleted) (err error)
 
 		// The store metrics
@@ -44,6 +47,12 @@ type (
 		KeyGroup string
 		Key      []byte
 		Content  []byte
+		RefKeys  map[string]StoreReference
+	}
+
+	StoreReference struct {
+		KeyGroup string
+		ValueKey []byte
 	}
 
 	StoreStats struct {
@@ -64,20 +73,22 @@ type (
 		keysRemoved    uint64
 		shardsAccessed uint64
 		shardsRemoved  uint64
+		refTables      map[string]*refTable
 	}
 )
 
 func NewStore(cfg *VfsConfig) (st Store, err error) {
-	ai, err := newIndex(cfg)
+	ai, err := newIndex(cfg, kMainIndexExt)
 	if err != nil {
 		return
 	}
 
 	s := &store{
-		ai:       ai,
-		cfg:      *cfg,
-		shards:   map[uint64]afero.File{},
-		accessed: map[uint64]time.Time{},
+		ai:        ai,
+		cfg:       *cfg,
+		shards:    map[uint64]afero.File{},
+		accessed:  map[uint64]time.Time{},
+		refTables: map[string]*refTable{},
 	}
 
 	if s.cfg.ShardDurationDays == 0 {
@@ -88,6 +99,21 @@ func NewStore(cfg *VfsConfig) (st Store, err error) {
 	}
 	if s.cfg.CacheSize == 0 {
 		s.cfg.CacheSize = 1024
+	}
+
+	for _, name := range s.cfg.ReferenceTables {
+		var tbl *refTable
+		tbl, err = newRefTable(&s.cfg, name)
+		if err != nil {
+			ai.Close()
+			for _, table := range s.refTables {
+				table.Close()
+			}
+			return
+		}
+
+		s.refTables[name] = tbl
+		tbl.Start()
 	}
 
 	st = s
@@ -130,7 +156,7 @@ func (st *store) openShard(request uint64) (f afero.File, shard uint64, err erro
 	if !exists {
 		shardPath := path.Join(st.cfg.DataDir, fmt.Sprintf("%s.%d.dt3", st.cfg.BaseName, shard))
 
-		f, err = AppFs.OpenFile(shardPath, os.O_CREATE|os.O_RDWR, 0644)
+		f, err = openFile(shardPath)
 		if err != nil {
 			err = fmt.Errorf("error opening shard %s: %v", shardPath, err)
 			return
@@ -202,28 +228,74 @@ func (st *store) purgeShards(cutoff time.Time) (err error) {
 }
 
 func (st *store) StoreContent(records []StoreRecord, onComplete CommitCompleted) (err error) {
-	err = st.doStoreContent(records, onComplete)
-	if err != nil && onComplete != nil {
-		onComplete(err)
+	st.mu.Lock()
+
+	err = st.doStoreContent(records, func(failure error) {
+		// after i/o
+		if onComplete != nil {
+			onComplete(failure)
+		}
+		st.mu.Unlock()
+	})
+	if err != nil {
+		// immediate error
+		if onComplete != nil {
+			onComplete(err)
+		}
+		st.mu.Unlock()
 	}
 	return
 }
 
 func (st *store) doStoreContent(records []StoreRecord, onComplete CommitCompleted) (err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
 	f, shard, err := st.openShard(0)
 	if err != nil {
 		return
 	}
 
-	txn, err := st.ai.BeginTransaction()
+	// begin outer transaction
+	tm := newTransactionManager(onComplete)
+	txn, err := st.ai.BeginTransaction(tm)
 	if err != nil {
 		return
 	}
+	defer func() {
+		// Those who directly make the transaction manager don't call EndTransaction,
+		// but instead call tm.Resolve.
+		err = tm.Resolve(err)
+	}()
+
+	// determine which ref tables are being used and attach update instances to the transaction
+	refTableTxns := map[string]*refTableTransaction{}
+	for _, record := range records {
+		for name := range record.RefKeys {
+			_, exists := refTableTxns[name]
+			if !exists {
+				refTable := st.refTables[name]
+				if refTable == nil {
+					err = fmt.Errorf("reference table %s is not specified in the configuration reference_tables array", name)
+					return
+				}
+
+				var refTableTxn *refTableTransaction
+				refTableTxn, err = refTable.BeginTransaction(tm)
+				if err != nil {
+					return
+				}
+				refTableTxns[name] = refTableTxn
+			}
+		}
+	}
+
+	if len(tm.dataStores) > 3 {
+		panic("BUGBUG bad")
+	}
 
 	for _, record := range records {
+		//
+		// Store the main document.
+		//
+
 		sizedContent := make([]byte, len(record.Content)+4)
 		binary.BigEndian.PutUint32(sizedContent[0:4], uint32(len(record.Content)))
 		copy(sizedContent[4:], record.Content)
@@ -247,23 +319,24 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 		if txn.Set(record.KeyGroup, record.Key, shard, uint64(offset)); err != nil {
 			return
 		}
-	}
 
-	if st.cfg.SyncTask {
-		go func() {
-			if err = f.Sync(); err != nil {
+		//
+		// Add references.
+		//
+
+		for name, refKey := range record.RefKeys {
+			rtxn := refTableTxns[name]
+			refRecords := []RefRecord{{refKey.KeyGroup, refKey.ValueKey, record.Key}}
+			if err = rtxn.AddReferences(refRecords); err != nil {
 				return
 			}
-
-		}()
-	} else if st.cfg.Sync {
-		if err = f.Sync(); err != nil {
-			return
 		}
 	}
 
-	if err = txn.doEndTransaction(onComplete); err != nil {
-		return
+	if st.cfg.Sync {
+		if err = f.Sync(); err != nil {
+			return
+		}
 	}
 
 	return
@@ -273,10 +346,16 @@ func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, e
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	txn, err := st.ai.BeginTransaction()
+	txn, err := st.ai.BeginTransaction(nil)
 	if err != nil {
 		return
 	}
+	defer func() {
+		terr := st.ai.txn.EndTransaction()
+		if err == nil {
+			err = terr
+		}
+	}()
 
 	found, shard, position, err := txn.Get(keyGroup, key)
 	if err != nil {
@@ -320,45 +399,58 @@ func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, e
 		content = data
 	}
 
-	if err = txn.EndTransaction(nil); err != nil {
-		return
-	}
+	return
+}
 
+func (st *store) RetrieveReferences(name, keyGroup string, valueKey []byte) (refKeys [][]byte, err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	table := st.refTables[name]
+	if table != nil {
+		refKeys, err = table.RetrieveReferences(keyGroup, valueKey)
+	}
 	return
 }
 
 func (st *store) PurgeOld(onComplete CommitCompleted) (err error) {
-	err = st.doPurgeOld(onComplete)
-	if err != nil && onComplete != nil {
-		onComplete(err)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if onComplete == nil {
+		err = st.doPurgeOld()
+	} else {
+		go func() {
+			failure := st.doPurgeOld()
+			onComplete(failure)
+		}()
 	}
 	return
 }
 
-func (st *store) doPurgeOld(onComplete CommitCompleted) (err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
+func (st *store) doPurgeOld() (err error) {
 	cutoff := time.Now().UTC().Add(-(time.Duration(time.Hour * 24 * time.Duration(st.cfg.ShardRetentionDays))))
 
 	before := st.ai.Stats()
 
-	if err = st.ai.doRemoveBefore(cutoff, func(err error) { st.doPurgeShards(cutoff, onComplete) }); err != nil {
+	if err = st.ai.doRemoveBefore(cutoff); err != nil {
+		return
+	}
+
+	if err = st.purgeShards(cutoff); err != nil {
 		return
 	}
 
 	after := st.ai.Stats()
 	st.keysRemoved += after.Deletes - before.Deletes
 
-	return nil
-}
-
-func (st *store) doPurgeShards(cutoff time.Time, onComplete CommitCompleted) {
-	err := st.purgeShards(cutoff)
-
-	if onComplete != nil {
-		onComplete(err)
+	for _, refTable := range st.refTables {
+		if err = refTable.PurgeOld(cutoff); err != nil {
+			return
+		}
 	}
+
+	return
 }
 
 func (st *store) Stats() StoreStats {
@@ -409,6 +501,9 @@ func (st *store) Close() (err error) {
 	}
 	st.shards = map[uint64]afero.File{}
 	st.accessed = map[uint64]time.Time{}
+	for _, tbl := range st.refTables {
+		tbl.Close()
+	}
 
 	return err
 }

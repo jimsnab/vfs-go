@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/spf13/afero"
+	"github.com/jimsnab/afero"
 )
 
 type (
@@ -41,6 +41,9 @@ type (
 		nextByTime      uint64
 		keyIteration    bool
 		closed          bool
+		bugbug          string
+		bugbugFlushing  atomic.Bool
+		bugbugFlushNum  atomic.Int32
 	}
 
 	avlNode struct {
@@ -93,9 +96,9 @@ const (
 	testPtPosition
 )
 
-func newAvlTree(cfg *VfsConfig, keyGroup string) (tree *avlTree, err error) {
-	filePath := path.Join(cfg.IndexDir, fmt.Sprintf("%s.%s.dt1", cfg.BaseName, keyGroup))
-	f, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
+func newAvlTree(cfg *VfsConfig, keyGroup, extension string) (tree *avlTree, err error) {
+	filePath := path.Join(cfg.IndexDir, fmt.Sprintf("%s.%s.%s", cfg.BaseName, keyGroup, extension))
+	f, err := openFile(filePath)
 	if err != nil {
 		err = fmt.Errorf("error opening index file %s: %v", filePath, err)
 		return
@@ -105,8 +108,11 @@ func newAvlTree(cfg *VfsConfig, keyGroup string) (tree *avlTree, err error) {
 		return
 	}
 
-	filePath = path.Join(cfg.IndexDir, fmt.Sprintf("%s.%s.dt2", cfg.BaseName, keyGroup))
-	rf, err := AppFs.OpenFile(filePath, os.O_CREATE|os.O_RDWR, 0644)
+	end := len(extension) - 1
+	extension2 := extension[:end] + string(extension[end]+1)
+
+	filePath = path.Join(cfg.IndexDir, fmt.Sprintf("%s.%s.%s", cfg.BaseName, keyGroup, extension2))
+	rf, err := openFile(filePath)
 	if err != nil {
 		f.Close()
 		err = fmt.Errorf("error opening index recovery file %s: %v", filePath, err)
@@ -114,6 +120,8 @@ func newAvlTree(cfg *VfsConfig, keyGroup string) (tree *avlTree, err error) {
 	}
 
 	if err = rf.Sync(); err != nil {
+		f.Close()
+		rf.Close()
 		return
 	}
 
@@ -130,6 +138,7 @@ func newAvlTree(cfg *VfsConfig, keyGroup string) (tree *avlTree, err error) {
 		freeNodes:    make(map[uint64]*freeNode, kFreeCacheSize),
 		cfg:          cfg,
 	}
+	at.bugbug = fmt.Sprintf("%p", &at)
 	at.allocLru = newLruStack[*avlNode](acs, at.collectNode)
 
 	err = func() (err error) {

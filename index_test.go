@@ -7,10 +7,11 @@ import (
 	mrand "math/rand"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/spf13/afero"
+	"github.com/jimsnab/afero"
 )
 
 const kTestKeyGroup = "test"
@@ -36,9 +37,29 @@ func benchmarkInitialize(b *testing.B) (ts *testState) {
 }
 
 func TestIndexWrites(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	filePath := "/test/data.txt"
+	err := fs.MkdirAll("/test", 0744)
+	if err != nil {
+		panic(err)
+	}
+	f1, err := fs.OpenFile(filePath, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0644)
+	if err != nil {
+		panic(err)
+	}
+	err = f1.Close()
+	if err != nil {
+		panic(err)
+	}
+	f2, err := fs.OpenFile(filePath, os.O_RDWR|os.O_EXCL, 0644)
+	if err != nil {
+		panic(err)
+	}
+	f2.Close()
+
 	ts := testInitialize(t, false)
 
-	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +75,7 @@ func TestIndexWrites(t *testing.T) {
 		}
 		ids = append(ids, buf)
 
-		txn, err := index.BeginTransaction()
+		txn, err := index.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -64,7 +85,7 @@ func TestIndexWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -72,7 +93,7 @@ func TestIndexWrites(t *testing.T) {
 
 	for i := 0; i < 10000; i++ {
 		buf := ids[i]
-		txn, err := index.BeginTransaction()
+		txn, err := index.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -94,7 +115,7 @@ func TestIndexWrites(t *testing.T) {
 			t.Fatal("not shard")
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +125,12 @@ func TestIndexWrites(t *testing.T) {
 func TestIndexWrites2(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	index1, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	AppFs = afero.NewOsFs()
+	ts.testDir = "/tmp/data"
+	AppFs.RemoveAll(ts.testDir)
+	AppFs.MkdirAll(ts.testDir, 0744)
+
+	index1, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +145,7 @@ func TestIndexWrites2(t *testing.T) {
 		}
 		ids = append(ids, buf)
 
-		txn, err := index1.BeginTransaction()
+		txn, err := index1.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,7 +155,7 @@ func TestIndexWrites2(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,14 +163,14 @@ func TestIndexWrites2(t *testing.T) {
 
 	index1.Close()
 
-	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for i := 0; i < 10000; i++ {
 		buf := ids[i]
-		txn, err := index2.BeginTransaction()
+		txn, err := index2.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -166,7 +192,7 @@ func TestIndexWrites2(t *testing.T) {
 			t.Fatal("not shard")
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -178,7 +204,7 @@ func TestIndexWrites2(t *testing.T) {
 func BenchmarkIndex(b *testing.B) {
 	ts := benchmarkInitialize(b)
 
-	index1, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index1, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -190,7 +216,7 @@ func BenchmarkIndex(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		txn, err := index1.BeginTransaction()
+		txn, err := index1.BeginTransaction(nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -200,7 +226,7 @@ func BenchmarkIndex(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -210,7 +236,7 @@ func BenchmarkIndex(b *testing.B) {
 func TestIndexDiscardSome(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	index1, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index1, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +258,7 @@ func TestIndexDiscardSome(t *testing.T) {
 		}
 		ids = append(ids, buf)
 
-		txn, err := index1.BeginTransaction()
+		txn, err := index1.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -242,7 +268,7 @@ func TestIndexDiscardSome(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -251,7 +277,7 @@ func TestIndexDiscardSome(t *testing.T) {
 	index1.Check()
 	index1.Close()
 
-	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +289,7 @@ func TestIndexDiscardSome(t *testing.T) {
 
 	index2.Close()
 
-	index3, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index3, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +298,7 @@ func TestIndexDiscardSome(t *testing.T) {
 	deletes := 0
 	for i := 0; i < count; i++ {
 		buf := ids[i]
-		txn, err := index3.BeginTransaction()
+		txn, err := index3.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -299,7 +325,7 @@ func TestIndexDiscardSome(t *testing.T) {
 			}
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -324,7 +350,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 		BaseName: "index",
 	}
 
-	index1, err := newIndex(&cfg)
+	index1, err := newIndex(&cfg, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +367,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 		}
 		ids = append(ids, buf)
 
-		txn, err := index1.BeginTransaction()
+		txn, err := index1.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -351,7 +377,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,7 +388,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 	index1.Check()
 	index1.Close()
 
-	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +396,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 	expected := -1
 	for i := 0; i < count; i++ {
 		buf := ids[i]
-		txn, err := index2.BeginTransaction()
+		txn, err := index2.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -398,7 +424,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 			}
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -416,7 +442,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 		CacheSize: 256,
 	}
 
-	index1, err := newIndex(&cfg)
+	index1, err := newIndex(&cfg, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +452,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 	ids := make([][]byte, 0, count)
 
 	for i := 0; i < count; i++ {
-		txn, err := index1.BeginTransaction()
+		txn, err := index1.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -444,7 +470,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 			}
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -454,7 +480,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 
 	index1.Close()
 
-	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index2, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +488,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 	expected := -1
 	for i := 0; i < count; i++ {
 		buf := ids[i]
-		txn, err := index2.BeginTransaction()
+		txn, err := index2.BeginTransaction(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -490,7 +516,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 			}
 		}
 
-		err = txn.EndTransaction(nil)
+		err = txn.EndTransaction()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -502,11 +528,11 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 func TestRecover(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	counter := 0
+	var counter atomic.Int32
 	for pass := 0; pass < 100; pass++ {
 		// create or open the test index
 		fmt.Printf("starting pass %d\n", pass)
-		index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index", RecoveryEnabled: true})
+		index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index", RecoveryEnabled: true}, kMainIndexExt)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -525,30 +551,39 @@ func TestRecover(t *testing.T) {
 					return
 				}
 
+				var wg2 sync.WaitGroup
+				wg2.Add(1)
 				var txn *avlTransaction
-				txn, setError = index.BeginTransaction()
-				if setError != nil {
-					return
-				}
 
-				setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter))
-				if setError != nil {
-					return
-				}
-
-				var wg sync.WaitGroup
-				wg.Add(1)
-				setError = txn.EndTransaction(func(err error) {
+				tm := newTransactionManager(func(err error) {
 					if err == nil {
-						counter++
+						counter.Add(1)
+					} else {
+						setError = err
 					}
-					wg.Done()
+					wg2.Done()
 				})
+
+				txn, setError = index.BeginTransaction(tm)
 				if setError != nil {
 					return
 				}
 
-				wg.Wait()
+				setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter.Load()))
+				if setError != nil {
+					return
+				}
+
+				// we made tm, so we call tm.Resolve() instead of txn.EndTransaction()
+				setError = tm.Resolve(nil)
+				if setError != nil {
+					return
+				}
+
+				wg2.Wait()
+				if setError != nil {
+					return
+				}
 			}
 		}()
 
@@ -571,7 +606,7 @@ func TestRecover(t *testing.T) {
 	}
 
 	// verify linear insertion
-	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,12 +639,21 @@ func TestRecover(t *testing.T) {
 func TestRecoverWithPurge(t *testing.T) {
 	ts := testInitialize(t, false)
 
-	counter := 0
+	var counter atomic.Int32
 	for pass := 0; pass < 100; pass++ {
 
 		// create or open the test index
-		fmt.Printf("starting pass %d at %d\n", pass, counter)
-		index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index", RecoveryEnabled: true, ShardDurationDays: 20 / float64(86400000), ShardRetentionDays: 40 / float64(86400000)})
+		fmt.Printf("starting pass %d at %d\n", pass, counter.Load())
+		index, err := newIndex(
+			&VfsConfig{
+				IndexDir:           ts.testDir,
+				BaseName:           "index",
+				RecoveryEnabled:    true,
+				ShardDurationDays:  20 / float64(86400000),
+				ShardRetentionDays: 40 / float64(86400000),
+			},
+			kMainIndexExt,
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -636,29 +680,38 @@ func TestRecoverWithPurge(t *testing.T) {
 					return
 				}
 
-				var txn *avlTransaction
-				txn, setError = index.BeginTransaction()
-				if setError != nil {
-					mu.Unlock()
-					return
-				}
-
-				setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter))
-				if setError != nil {
-					mu.Unlock()
-					return
-				}
-
 				var wg2 sync.WaitGroup
 				wg2.Add(1)
-				setError = txn.EndTransaction(func(err error) {
+				var txn *avlTransaction
+
+				tm := newTransactionManager(func(err error) {
 					index.Stats() // get stats in completion function to ensure no mutex deadlock
 					if err == nil {
-						counter++
+						counter.Add(1)
+					} else {
+						setError = err
 					}
 					wg2.Done()
 					mu.Unlock()
 				})
+
+				txn, setError = index.BeginTransaction(tm)
+				if setError != nil {
+					mu.Unlock()
+					return
+				}
+
+				setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter.Load()))
+				if setError != nil {
+					mu.Unlock()
+					return
+				}
+
+				// we made tm, so we call tm.Resolve() instead of txn.EndTransaction()
+				setError = tm.Resolve(nil)
+				if setError != nil {
+					return
+				}
 
 				wg2.Wait() // completion function must complete before this pass is done
 
@@ -725,7 +778,7 @@ func TestRecoverWithPurge(t *testing.T) {
 	}
 
 	// verify linear insertion
-	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"})
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
 	if err != nil {
 		t.Fatal(err)
 	}

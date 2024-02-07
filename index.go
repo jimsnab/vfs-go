@@ -3,19 +3,32 @@ package vfs
 import (
 	"errors"
 	"io/fs"
+	"math"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/spf13/afero"
+	"github.com/jimsnab/afero"
 )
 
 type (
 	avlIndex struct {
-		trees map[string]*avlTree
-		txn   *avlTransaction
-		cfg   *VfsConfig
+		mu        sync.Mutex
+		extension string
+		trees     map[string]*avlTree
+		txn       *avlTransaction
+		cfg       *VfsConfig
+		removed   map[[20]byte]struct{}
+	}
+
+	indexIterator struct {
+		done        bool
+		availableCh chan struct{}
+		releaseCh   chan error
+		node        *avlNode
+		failure     error
 	}
 )
 
@@ -23,10 +36,13 @@ var AppFs = afero.NewOsFs()
 
 var ErrTransactionStarted = errors.New("transaction in progress")
 
-func newIndex(cfg *VfsConfig) (index *avlIndex, err error) {
+const kMainIndexExt = "dt1"
+
+func newIndex(cfg *VfsConfig, extension string) (index *avlIndex, err error) {
 	ai := &avlIndex{
-		trees: map[string]*avlTree{},
-		cfg:   cfg,
+		trees:     map[string]*avlTree{},
+		cfg:       cfg,
+		extension: extension,
 	}
 
 	if err = ai.OpenAll(); err != nil {
@@ -38,10 +54,14 @@ func newIndex(cfg *VfsConfig) (index *avlIndex, err error) {
 }
 
 func (ai *avlIndex) OpenAll() (err error) {
+	ai.mu.Lock()
+	defer ai.mu.Unlock()
+
 	prefix := ai.cfg.BaseName + "."
+	suffix := "." + ai.extension
 	terr := afero.Walk(AppFs, ai.cfg.IndexDir, func(path string, info fs.FileInfo, err error) error {
 		name := info.Name()
-		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, ".dt1") {
+		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
 			keyGroup := name[len(prefix) : len(name)-4]
 			_, err = ai.getTree(keyGroup)
 		}
@@ -53,6 +73,7 @@ func (ai *avlIndex) OpenAll() (err error) {
 	return
 }
 
+// worker to get the avl tree for the key group, creating it if necessary
 func (ai *avlIndex) getTree(keyGroup string) (tree *avlTree, err error) {
 	if ai.trees == nil {
 		err = os.ErrClosed
@@ -61,7 +82,7 @@ func (ai *avlIndex) getTree(keyGroup string) (tree *avlTree, err error) {
 
 	t := ai.trees[keyGroup]
 	if t == nil {
-		t, err = newAvlTree(ai.cfg, keyGroup)
+		t, err = newAvlTree(ai.cfg, keyGroup, ai.extension)
 		if err != nil {
 			return
 		}
@@ -70,11 +91,13 @@ func (ai *avlIndex) getTree(keyGroup string) (tree *avlTree, err error) {
 	}
 
 	tree = t
-
 	return
 }
 
 func (ai *avlIndex) Sync() (err error) {
+	ai.mu.Lock()
+	defer ai.mu.Unlock()
+
 	if ai.trees == nil {
 		return os.ErrClosed
 	}
@@ -90,6 +113,9 @@ func (ai *avlIndex) Sync() (err error) {
 }
 
 func (ai *avlIndex) Close() (err error) {
+	ai.mu.Lock()
+	defer ai.mu.Unlock()
+
 	if ai.trees == nil {
 		return os.ErrClosed
 	}
@@ -104,44 +130,60 @@ func (ai *avlIndex) Close() (err error) {
 	return
 }
 
-func (ai *avlIndex) BeginTransaction() (txn *avlTransaction, err error) {
+// Starts a transaction. If tm is nil, a transactionManager is allocated.
+func (ai *avlIndex) BeginTransaction(tm *transactionManager) (txn *avlTransaction, err error) {
+	ai.mu.Lock()
+	defer ai.mu.Unlock()
+
 	if ai.txn != nil {
 		err = ErrTransactionStarted
 		return
+	}
+
+	var ownedTm *transactionManager
+	if tm == nil {
+		ownedTm = newTransactionManager(nil)
+		tm = ownedTm
 	}
 
 	txn = &avlTransaction{
 		ai:      ai,
+		ownedTm: ownedTm,
 		touched: map[string]struct{}{},
 	}
 	ai.txn = txn
+	tm.Attach(txn)
 	return
 }
 
 func (ai *avlIndex) RemoveBefore(cutoff time.Time, onComplete CommitCompleted) (err error) {
-	err = ai.doRemoveBefore(cutoff, onComplete)
-	if err != nil && onComplete != nil {
-		onComplete(err)
+	// if onComplete is nil, perform operation in blocking mode
+	var wg sync.WaitGroup
+	if onComplete == nil {
+		wg.Add(1)
+		onComplete = func(failure error) {
+			err = failure
+			wg.Done()
+		}
 	}
+
+	go func() {
+		onComplete(ai.doRemoveBefore(cutoff))
+	}()
+
+	wg.Wait()
 	return
 }
 
-func (ai *avlIndex) doRemoveBefore(cutoff time.Time, onComplete CommitCompleted) (err error) {
+func (ai *avlIndex) doRemoveBefore(cutoff time.Time) (err error) {
 	if ai.txn != nil {
 		err = ErrTransactionStarted
 		return
 	}
 
-	var wg sync.WaitGroup
-	onTreeComplete := func(failed error) {
-		if err == nil {
-			err = failed
-		}
-		wg.Done()
-	}
+	cutoffNs := cutoff.UnixNano()
 
 	for _, tree := range ai.trees {
-		cutoffNs := cutoff.UnixNano()
 		deletions := 0
 		var order int64
 		terr := tree.IterateByTimestamp(func(node *avlNode) error {
@@ -154,6 +196,11 @@ func (ai *avlIndex) doRemoveBefore(cutoff time.Time, onComplete CommitCompleted)
 
 			if createdNs >= cutoffNs {
 				return ErrIteratorAbort
+			}
+
+			// testing support
+			if ai.removed != nil {
+				ai.removed[[20]byte(node.Key())] = struct{}{}
 			}
 
 			// delete invalidates node
@@ -170,7 +217,14 @@ func (ai *avlIndex) doRemoveBefore(cutoff time.Time, onComplete CommitCompleted)
 			if deletions == 1000 {
 				// flush every 1000 removals
 				deletions = 0
-				tree.flush(nil)
+				hasBackup, err := tree.flush()
+				if err != nil {
+					return err
+				}
+				err = tree.commit(hasBackup)
+				if err != nil {
+					return err
+				}
 			}
 
 			return nil
@@ -181,15 +235,127 @@ func (ai *avlIndex) doRemoveBefore(cutoff time.Time, onComplete CommitCompleted)
 			return
 		}
 
-		wg.Add(1)
-		if err = tree.flush(onTreeComplete); err != nil {
+		var hasBackup bool
+		hasBackup, err = tree.flush()
+		if err != nil {
+			return
+		}
+		if err = tree.commit(hasBackup); err != nil {
 			return
 		}
 	}
 
-	wg.Wait()
-	if err == nil && onComplete != nil {
-		onComplete(nil)
+	return
+}
+
+func (ai *avlIndex) IterateByTimestamp(iter AvlIterator) (err error) {
+	var wg sync.WaitGroup
+	var mu sync.Mutex // synchronizes 'done' state
+	nodes := map[*indexIterator]bool{}
+
+	for _, t := range ai.trees {
+		ii := indexIterator{
+			availableCh: make(chan struct{}),
+			releaseCh:   make(chan error),
+		}
+
+		wrapper := func(node *avlNode) (err error) {
+			// post the node
+			ii.failure = err
+			ii.node = node
+			ii.availableCh <- struct{}{}
+
+			// wait for aggregation to process the result
+			err = <-ii.releaseCh
+			return
+		}
+
+		wg.Add(1)
+		nodes[&ii] = false
+		go func(tree *avlTree) {
+			defer wg.Done()
+
+			ierr := tree.IterateByTimestamp(wrapper)
+
+			mu.Lock()
+			ii.done = true
+			ii.failure = ierr
+			mu.Unlock()
+		}(t)
+	}
+
+	for {
+		// capture the next node from each index iterator
+		bestTs := int64(math.MaxInt64)
+		var bestIter *indexIterator
+		for ii, captured := range nodes {
+			if !captured {
+				mu.Lock()
+				iiDone := ii.done
+				mu.Unlock()
+
+				if iiDone {
+					continue
+				}
+
+				<-ii.availableCh
+				nodes[ii] = true
+			}
+
+			if ii.failure != nil {
+				bestIter = ii
+				break
+			}
+			if ii.node.timestamp < bestTs {
+				bestTs = ii.node.timestamp
+				bestIter = ii
+			}
+		}
+
+		if bestIter == nil {
+			// nothing more to iterate
+			wg.Wait()
+			return
+		}
+
+		if bestIter.failure != nil {
+			err = bestIter.failure
+
+			// release the unfailed iterators
+			for ii := range nodes {
+				mu.Lock()
+				iiDone := ii.done
+				mu.Unlock()
+				if !iiDone {
+					ii.releaseCh <- err
+				}
+			}
+
+			wg.Wait()
+			return
+		}
+
+		// invoke callback
+		iter(bestIter.node)
+
+		// release the processed iterator
+		nodes[bestIter] = false
+		bestIter.releaseCh <- nil
+	}
+}
+
+func (ai *avlIndex) IterateByKeys(iter AvlIterator) (err error) {
+	keyGroups := make([]string, 0, len(ai.trees))
+	for keyGroup := range ai.trees {
+		keyGroups = append(keyGroups, keyGroup)
+	}
+	slices.Sort(keyGroups)
+	for _, keyGroup := range keyGroups {
+		tree := ai.trees[keyGroup]
+		err = tree.IterateByKeys(iter)
+		if err != nil {
+			return
+		}
 	}
 
 	return

@@ -11,11 +11,14 @@ type (
 	CommitCompleted func(err error)
 )
 
-// inner function - does not call onComplete when it returns non nil err
-func (tree *avlTree) flush(onComplete CommitCompleted) (err error) {
+func (tree *avlTree) flush() (hasBackup bool, err error) {
+	if tree.bugbugFlushing.Swap(true) {
+		panic("re-entered flush")
+	}
+	tree.bugbugFlushNum.Add(1)
+
 	// back up everything
 	hasNew := (tree.allocatedSize != tree.committedSize)
-	hasBackup := false
 
 	if tree.cfg.RecoveryEnabled {
 		hasBackup = hasNew
@@ -102,44 +105,31 @@ func (tree *avlTree) flush(onComplete CommitCompleted) (err error) {
 		}
 	}
 
-	if tree.cfg.SyncTask {
-		tree.dt1sync.Add(1)
-		go func() {
-			defer tree.dt1sync.Done()
-			if err = tree.f.Sync(); err != nil {
-				return
-			}
-		}()
-	} else if tree.cfg.Sync {
+	if tree.cfg.Sync {
 		if err = tree.f.Sync(); err != nil {
 			return
 		}
 	}
 
-	// success - discard recovery data
+	return
+}
+
+func (tree *avlTree) commit(hasBackup bool) (err error) {
+	// success - discard recovery data lazily
 	if hasBackup {
 		tree.dt2sync.Add(1)
 		go func() {
-			err := func() error {
-				defer tree.dt2sync.Done()
+			defer tree.dt2sync.Done()
 
-				tree.dt1sync.Wait()
+			tree.dt1sync.Wait()
 
-				err := tree.rf.Truncate(0)
-				if err != nil {
-					return err
-				}
-
-				return tree.rf.Sync()
-			}()
-			if onComplete != nil {
-				onComplete(err)
+			err := tree.rf.Truncate(0)
+			if err != nil {
+				return
 			}
+
+			tree.rf.Sync()
 		}()
-	} else {
-		if onComplete != nil {
-			onComplete(nil)
-		}
 	}
 
 	// purge write queue
@@ -147,6 +137,7 @@ func (tree *avlTree) flush(onComplete CommitCompleted) (err error) {
 
 	// toss old allocs
 	tree.allocLru.Collect()
+	tree.bugbugFlushing.Store(false)
 	return
 }
 
