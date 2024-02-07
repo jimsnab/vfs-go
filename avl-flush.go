@@ -12,11 +12,6 @@ type (
 )
 
 func (tree *avlTree) flush() (hasBackup bool, err error) {
-	if tree.bugbugFlushing.Swap(true) {
-		panic("re-entered flush")
-	}
-	tree.bugbugFlushNum.Add(1)
-
 	// back up everything
 	hasNew := (tree.allocatedSize != tree.committedSize)
 
@@ -137,7 +132,6 @@ func (tree *avlTree) commit(hasBackup bool) (err error) {
 
 	// toss old allocs
 	tree.allocLru.Collect()
-	tree.bugbugFlushing.Store(false)
 	return
 }
 

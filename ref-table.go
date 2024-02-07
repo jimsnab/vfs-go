@@ -197,7 +197,7 @@ func (table *refTable) PurgeOld(cutoff time.Time) (err error) {
 }
 
 // API task worker (caller holds the lock)
-func (table *refTable) openShard(request uint64) (f afero.File, shard uint64, err error) {
+func (table *refTable) openShard(request uint64, forRead bool) (f afero.File, shard uint64, err error) {
 	if request == 0 {
 		shard = table.calcShard(time.Now().UTC())
 	} else {
@@ -208,7 +208,7 @@ func (table *refTable) openShard(request uint64) (f afero.File, shard uint64, er
 	if !exists {
 		shardPath := path.Join(table.cfg.DataDir, fmt.Sprintf("%s.%s.%d.%s", table.cfg.BaseName, table.name, shard, table.extension))
 
-		f, err = openFile(shardPath)
+		f, err = createOrOpenFile(shardPath, forRead)
 		if err != nil {
 			err = fmt.Errorf("error opening shard %s: %v", shardPath, err)
 			return

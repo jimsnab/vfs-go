@@ -37,26 +37,6 @@ func benchmarkInitialize(b *testing.B) (ts *testState) {
 }
 
 func TestIndexWrites(t *testing.T) {
-	fs := afero.NewMemMapFs()
-	filePath := "/test/data.txt"
-	err := fs.MkdirAll("/test", 0744)
-	if err != nil {
-		panic(err)
-	}
-	f1, err := fs.OpenFile(filePath, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0644)
-	if err != nil {
-		panic(err)
-	}
-	err = f1.Close()
-	if err != nil {
-		panic(err)
-	}
-	f2, err := fs.OpenFile(filePath, os.O_RDWR|os.O_EXCL, 0644)
-	if err != nil {
-		panic(err)
-	}
-	f2.Close()
-
 	ts := testInitialize(t, false)
 
 	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
@@ -231,6 +211,99 @@ func BenchmarkIndex(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func BenchmarkStore(b *testing.B) {
+	originalFs := AppFs
+	//AppFs = afero.NewMemMapFs()
+	AppFs = afero.NewOsFs()
+	b.Cleanup(func() {
+		AppFs = originalFs
+	})
+
+	testDir := "/tmp/data"
+	err := AppFs.MkdirAll(testDir, 0744)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	cfg := VfsConfig{
+		IndexDir:        testDir,
+		DataDir:         testDir,
+		BaseName:        "the.test",
+		Sync:            true,
+		RecoveryEnabled: true,
+		ReferenceTables: []string{"A", "B"},
+	}
+
+	st, err := NewStore(&cfg)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	count := 200
+	batchSize := 128
+
+	start := time.Now()
+	last := start
+	for i := 0; i < count; i++ {
+		if time.Since(last).Seconds() >= 1 {
+			last = time.Now()
+			fmt.Printf("%d\n", i)
+		}
+		records := make([]StoreRecord, 0, batchSize)
+		for i := 0; i < batchSize; i++ {
+			key := make([]byte, 20)
+			_, err := rand.Read(key)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			doc := make([]byte, mrand.Intn(2048)+2048)
+			if _, err = rand.Read(doc); err != nil {
+				b.Fatal(err)
+			}
+
+			ref1 := make([]byte, 20)
+			if _, err = rand.Read(ref1); err != nil {
+				b.Fatal(err)
+			}
+
+			ref2 := make([]byte, 20)
+			if _, err = rand.Read(ref2); err != nil {
+				b.Fatal(err)
+			}
+
+			record := StoreRecord{
+				KeyGroup: keyGroupFromKey(key),
+				Key:      key,
+				Content:  doc,
+				RefKeys: map[string]StoreReference{
+					"A": {keyGroupFromKey(ref1), ref1},
+					"B": {keyGroupFromKey(ref2), ref2},
+				},
+			}
+
+			records = append(records, record)
+		}
+
+		wg.Add(1)
+		err = st.StoreContent(records, func(err error) {
+			if err != nil {
+				panic(err)
+			}
+			wg.Done()
+		})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	wg.Wait()
+
+	delta := time.Since(start)
+	fmt.Printf("%d per second\n", (count*batchSize)/int(delta.Seconds()))
 }
 
 func TestIndexDiscardSome(t *testing.T) {

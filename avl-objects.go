@@ -41,9 +41,6 @@ type (
 		nextByTime      uint64
 		keyIteration    bool
 		closed          bool
-		bugbug          string
-		bugbugFlushing  atomic.Bool
-		bugbugFlushNum  atomic.Int32
 	}
 
 	avlNode struct {
@@ -98,7 +95,7 @@ const (
 
 func newAvlTree(cfg *VfsConfig, keyGroup, extension string) (tree *avlTree, err error) {
 	filePath := path.Join(cfg.IndexDir, fmt.Sprintf("%s.%s.%s", cfg.BaseName, keyGroup, extension))
-	f, err := openFile(filePath)
+	f, err := createOrOpenFile(filePath, false)
 	if err != nil {
 		err = fmt.Errorf("error opening index file %s: %v", filePath, err)
 		return
@@ -112,7 +109,7 @@ func newAvlTree(cfg *VfsConfig, keyGroup, extension string) (tree *avlTree, err 
 	extension2 := extension[:end] + string(extension[end]+1)
 
 	filePath = path.Join(cfg.IndexDir, fmt.Sprintf("%s.%s.%s", cfg.BaseName, keyGroup, extension2))
-	rf, err := openFile(filePath)
+	rf, err := createOrOpenFile(filePath, false)
 	if err != nil {
 		f.Close()
 		err = fmt.Errorf("error opening index recovery file %s: %v", filePath, err)
@@ -138,7 +135,6 @@ func newAvlTree(cfg *VfsConfig, keyGroup, extension string) (tree *avlTree, err 
 		freeNodes:    make(map[uint64]*freeNode, kFreeCacheSize),
 		cfg:          cfg,
 	}
-	at.bugbug = fmt.Sprintf("%p", &at)
 	at.allocLru = newLruStack[*avlNode](acs, at.collectNode)
 
 	err = func() (err error) {

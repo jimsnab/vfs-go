@@ -1,6 +1,7 @@
 package vfs
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -145,7 +146,7 @@ func (st *store) timeFromShard(shard uint64) time.Time {
 	return time.Unix(int64(ms/1000), (ms%1000)*1000*1000)
 }
 
-func (st *store) openShard(request uint64) (f afero.File, shard uint64, err error) {
+func (st *store) openShard(request uint64, forRead bool) (f afero.File, shard uint64, err error) {
 	if request == 0 {
 		shard = st.calcShard(time.Now().UTC())
 	} else {
@@ -156,7 +157,7 @@ func (st *store) openShard(request uint64) (f afero.File, shard uint64, err erro
 	if !exists {
 		shardPath := path.Join(st.cfg.DataDir, fmt.Sprintf("%s.%d.dt3", st.cfg.BaseName, shard))
 
-		f, err = openFile(shardPath)
+		f, err = createOrOpenFile(shardPath, forRead)
 		if err != nil {
 			err = fmt.Errorf("error opening shard %s: %v", shardPath, err)
 			return
@@ -248,7 +249,7 @@ func (st *store) StoreContent(records []StoreRecord, onComplete CommitCompleted)
 }
 
 func (st *store) doStoreContent(records []StoreRecord, onComplete CommitCompleted) (err error) {
-	f, shard, err := st.openShard(0)
+	f, shard, err := st.openShard(0, false)
 	if err != nil {
 		return
 	}
@@ -287,18 +288,29 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 		}
 	}
 
-	if len(tm.dataStores) > 3 {
-		panic("BUGBUG bad")
-	}
-
 	for _, record := range records {
 		//
 		// Store the main document.
 		//
 
-		sizedContent := make([]byte, len(record.Content)+4)
-		binary.BigEndian.PutUint32(sizedContent[0:4], uint32(len(record.Content)))
-		copy(sizedContent[4:], record.Content)
+		var compressed []byte
+		if compressed, err = compress(record.Content); err != nil {
+			return
+		}
+
+		var plain []byte
+		if plain, err = uncompress(compressed); err != nil {
+			panic("can't uncompress")
+		}
+
+		if !bytes.Equal(plain, record.Content) {
+			panic("not a roundtrip")
+		}
+
+		compressedLen := len(compressed)
+		sizedContent := make([]byte, compressedLen+4)
+		binary.BigEndian.PutUint32(sizedContent[0:4], uint32(compressedLen))
+		copy(sizedContent[4:], compressed)
 
 		var offset int64
 		if offset, err = f.Seek(0, io.SeekEnd); err != nil {
@@ -364,7 +376,7 @@ func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, e
 
 	if found {
 		var f afero.File
-		f, _, err = st.openShard(shard)
+		f, _, err = st.openShard(shard, true)
 		if err != nil {
 			return
 		}
@@ -396,7 +408,9 @@ func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, e
 			return
 		}
 
-		content = data
+		if content, err = uncompress(data); err != nil {
+			return
+		}
 	}
 
 	return

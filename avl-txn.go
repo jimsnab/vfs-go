@@ -2,7 +2,6 @@ package vfs
 
 import (
 	"sync"
-	"sync/atomic"
 )
 
 type (
@@ -14,7 +13,6 @@ type (
 	}
 
 	avlTransactionResolver struct {
-		resolved  atomic.Bool
 		tree      *avlTree
 		keyGroup  string
 		hasBackup bool
@@ -92,10 +90,6 @@ func (txn *avlTransaction) Detach() {
 }
 
 func (resolver *avlTransactionResolver) Flush() (err error) {
-	// BUGBUG
-	if resolver.resolved.Swap(true) {
-		panic("already resolved")
-	}
 	resolver.hasBackup, err = resolver.tree.flush()
 	return
 }

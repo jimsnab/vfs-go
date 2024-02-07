@@ -71,7 +71,7 @@ func (txn *refTableTransaction) doAddReferences(refRecords []RefRecord) (err err
 		return
 	}
 
-	f, shard, err := table.openShard(0)
+	f, shard, err := table.openShard(0, false)
 	if err != nil {
 		return
 	}
@@ -190,7 +190,7 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 	}
 
 	var f afero.File
-	f, _, err = txn.table.openShard(shard)
+	f, _, err = txn.table.openShard(shard, true)
 	if err != nil {
 		return
 	}

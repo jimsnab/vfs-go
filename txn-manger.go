@@ -1,7 +1,6 @@
 package vfs
 
 import (
-	"reflect"
 	"sync"
 	"sync/atomic"
 )
@@ -167,13 +166,6 @@ func (tc *transactionCommit) resolve() error {
 func (tc *transactionCommit) Bind(resolver transactionResolver) {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
-
-	// BUGBUG
-	for _, r := range tc.resolvers {
-		if reflect.DeepEqual(r, resolver) {
-			panic("already bound")
-		}
-	}
 
 	tc.resolvers = append(tc.resolvers, resolver)
 }
