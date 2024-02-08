@@ -62,7 +62,7 @@ func (ai *avlIndex) OpenAll() (err error) {
 	terr := afero.Walk(AppFs, ai.cfg.IndexDir, func(path string, info fs.FileInfo, err error) error {
 		name := info.Name()
 		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
-			keyGroup := name[len(prefix) : len(name)-4]
+			keyGroup := name[len(prefix) : len(name)-len(suffix)]
 			_, err = ai.getTree(keyGroup)
 		}
 		return err
