@@ -13,7 +13,7 @@ import (
 )
 
 type (
-	AvlIterator func(node *avlNode) error
+	avlIterator func(node *avlNode) error
 
 	avlTree struct {
 		cfg             *VfsConfig

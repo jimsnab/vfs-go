@@ -23,21 +23,24 @@ type (
 		accessed         map[uint64]time.Time
 		index            *avlIndex
 		indexKeysRemoved uint64
-		shardsAccessed   uint64
+		shardsOpened     uint64
+		shardsClosed     uint64
 		shardsRemoved    uint64
 		wg               sync.WaitGroup
 		cancelFn         context.CancelFunc
 		cleanupInterval  time.Duration
+		idleFileHandle   time.Duration
 		txn              *refTableTransaction
 	}
 
 	refTableStats struct {
-		ShardsAccessed   uint64
+		ShardsOpened     uint64
+		ShardsClosed     uint64
 		IndexKeysRemoved uint64
 		ShardsRemoved    uint64
 	}
 
-	RefRecord struct {
+	refRecord struct {
 		KeyGroup string // the key group for ValueKey
 		ValueKey []byte // the indexed key, up to 20 bytes of data extracted from the history doc
 		StoreKey []byte // the history doc id
@@ -63,6 +66,7 @@ func newRefTable(cfg *VfsConfig, name string) (tbl *refTable, err error) {
 		shards:          map[uint64]afero.File{},
 		accessed:        map[uint64]time.Time{},
 		cleanupInterval: time.Minute,
+		idleFileHandle:  time.Minute * 15,
 	}
 
 	if t.cfg.ShardDurationDays == 0 {
@@ -87,7 +91,10 @@ func (table *refTable) Start() {
 }
 
 func (table *refTable) Stats() (stats refTableStats) {
-	stats.ShardsAccessed = table.shardsAccessed
+	table.mu.Lock()
+	defer table.mu.Unlock()
+	stats.ShardsOpened = table.shardsOpened
+	stats.ShardsClosed = table.shardsClosed
 	stats.IndexKeysRemoved = table.indexKeysRemoved
 	stats.ShardsRemoved = table.shardsRemoved
 	return
@@ -159,13 +166,14 @@ func (table *refTable) closeIdleShards() {
 	table.mu.Lock()
 	defer table.mu.Unlock()
 
-	cutoff := time.Now().UTC().Add(-time.Minute * 15)
+	cutoff := time.Now().UTC().Add(-table.idleFileHandle)
 	for sh, ts := range table.accessed {
 		if ts.Before(cutoff) {
 			f, exists := table.shards[sh]
 			if exists {
 				f.Close()
 				delete(table.shards, sh)
+				table.shardsClosed++
 			}
 			delete(table.accessed, sh)
 		}
@@ -215,9 +223,9 @@ func (table *refTable) openShard(request uint64, forRead bool) (f afero.File, sh
 		}
 
 		table.shards[shard] = f
-		table.accessed[shard] = time.Now().UTC()
-		table.shardsAccessed++
+		table.shardsOpened++
 	}
+	table.accessed[shard] = time.Now().UTC()
 
 	return
 }
@@ -268,7 +276,7 @@ func (table *refTable) purgeShards(cutoff time.Time) (err error) {
 	return
 }
 
-func (table *refTable) AddReferences(refRecords []RefRecord) (err error) {
+func (table *refTable) AddReferences(refRecords []refRecord) (err error) {
 	table.mu.Lock()
 	defer table.mu.Unlock()
 

@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/jimsnab/afero"
@@ -57,14 +59,14 @@ func (txn *refTableTransaction) doEndTransaction() (err error) {
 	return txn.txn.EndTransaction()
 }
 
-func (txn *refTableTransaction) AddReferences(refRecords []RefRecord) (err error) {
+func (txn *refTableTransaction) AddReferences(refRecords []refRecord) (err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 
 	return txn.doAddReferences(refRecords)
 }
 
-func (txn *refTableTransaction) doAddReferences(refRecords []RefRecord) (err error) {
+func (txn *refTableTransaction) doAddReferences(refRecords []refRecord) (err error) {
 	table := txn.table
 	if table.cancelFn == nil {
 		err = ErrNotStarted
@@ -192,6 +194,10 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 	var f afero.File
 	f, _, err = txn.table.openShard(shard, true)
 	if err != nil {
+		if strings.HasSuffix(err.Error(), os.ErrNotExist.Error()) {
+			// valueKey indexed but shard is gone; treat as if it doesn't exist
+			err = nil
+		}
 		return
 	}
 

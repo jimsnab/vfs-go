@@ -248,7 +248,7 @@ func (ai *avlIndex) doRemoveBefore(cutoff time.Time) (err error) {
 	return
 }
 
-func (ai *avlIndex) IterateByTimestamp(iter AvlIterator) (err error) {
+func (ai *avlIndex) IterateByTimestamp(iter avlIterator) (err error) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex // synchronizes 'done' state
 	nodes := map[*indexIterator]bool{}
@@ -344,7 +344,7 @@ func (ai *avlIndex) IterateByTimestamp(iter AvlIterator) (err error) {
 	}
 }
 
-func (ai *avlIndex) IterateByKeys(iter AvlIterator) (err error) {
+func (ai *avlIndex) IterateByKeys(iter avlIterator) (err error) {
 	keyGroups := make([]string, 0, len(ai.trees))
 	for keyGroup := range ai.trees {
 		keyGroups = append(keyGroups, keyGroup)

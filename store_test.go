@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestStoreAndGetOne(t *testing.T) {
@@ -29,6 +30,7 @@ func TestStoreAndGetOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer st.Close()
 
 	key := make([]byte, 20)
 	rand.Read(key)
@@ -73,6 +75,7 @@ func TestStoreAndGetOneSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer st.Close()
 
 	setSize := 200
 
@@ -605,4 +608,114 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 	fmt.Printf("records set: %d, records retrieved: %d\n", recordNumber, retrievals)
 	s := st.(*store)
 	fmt.Printf("purges: %d, files removed: %d, keys removed: %d\n", purges, s.shardsRemoved, s.keysRemoved)
+}
+
+func TestStorePurge(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	cfg := VfsConfig{
+		IndexDir:           ts.testDir,
+		DataDir:            ts.testDir,
+		BaseName:           "the.test",
+		Sync:               true,
+		ShardDurationDays:  0.00000116,
+		ShardRetentionDays: 0.00000463,
+		RecoveryEnabled:    true,
+		ReferenceTables:    []string{"a"},
+	}
+
+	fmt.Printf("shard life: %d ms\n", uint64(24*60*60*1000*cfg.ShardDurationDays))
+	fmt.Printf("shard retention: %d ms\n", uint64(24*60*60*1000*cfg.ShardRetentionDays))
+
+	st, err := newStoreInternal(&cfg, func(st *store) {
+		st.cleanupInterval = time.Millisecond * 25
+		st.idleFileHandle = time.Millisecond * 75
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	var mu sync.Mutex
+	readShard := map[uint64][]byte{}
+	lastShard := uint64(0)
+	add := true
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		end := time.Now().Add(time.Millisecond * 700)
+		for {
+			if time.Now().After(end) {
+				return
+			}
+
+			key := make([]byte, 20)
+			rand.Read(key)
+			data := make([]byte, 200)
+			rand.Read(data)
+
+			shard := st.calcShard(time.Now().UTC())
+			if shard != lastShard {
+				if add {
+					mu.Lock()
+					readShard[shard] = key
+					mu.Unlock()
+					add = false
+				} else {
+					add = true
+				}
+				lastShard = shard
+			}
+
+			records := []StoreRecord{{"a", key, data, nil}}
+			err := st.StoreContent(records, nil)
+			if err != nil {
+				panic(err)
+			}
+
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		end := time.Now().Add(time.Millisecond * 700)
+		for {
+			if time.Now().After(end) {
+				return
+			}
+
+			err := st.PurgeOld(nil)
+			if err != nil {
+				panic(err)
+			}
+
+			mu.Lock()
+			for _, k := range readShard {
+				if _, err = st.RetrieveContent("a", k); err != nil {
+					panic(err)
+				}
+			}
+			mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
+
+	stats := st.Stats()
+	if stats.ShardsClosed > 8 {
+		t.Fatal("too many shards closed")
+	}
+	delta := stats.ShardsOpened - stats.ShardsClosed
+	if delta < 2 {
+		t.Fatal("not enough older shards still open")
+	}
+	if stats.ShardsRemoved < 3 {
+		t.Fatal("too few shards removed")
+	}
+	fmt.Printf("opened: %d closed: %d removed: %d\n", stats.ShardsOpened, stats.ShardsClosed, stats.ShardsRemoved)
 }

@@ -458,7 +458,7 @@ func (node *avlNode) deleteRotateRight(middle *avlNode) (rotated *avlNode, rebal
 }
 
 // iterates the AVL tree in the order of node creation
-func (tree *avlTree) IterateByTimestamp(iter AvlIterator) (err error) {
+func (tree *avlTree) IterateByTimestamp(iter avlIterator) (err error) {
 	node, err := tree.loadNode(tree.getOldestOffset())
 	if err != nil {
 		return
@@ -482,7 +482,7 @@ func (tree *avlTree) IterateByTimestamp(iter AvlIterator) (err error) {
 }
 
 // iterates the AVL tree in sorted order
-func (tree *avlTree) IterateByKeys(iter AvlIterator) (err error) {
+func (tree *avlTree) IterateByKeys(iter avlIterator) (err error) {
 	root, err := tree.loadNode(tree.getRootOffset())
 	if err != nil {
 		return
@@ -495,7 +495,7 @@ func (tree *avlTree) IterateByKeys(iter AvlIterator) (err error) {
 	return
 }
 
-func (node *avlNode) iterateNext(iter AvlIterator) (err error) {
+func (node *avlNode) iterateNext(iter avlIterator) (err error) {
 	if node == nil {
 		return
 	}

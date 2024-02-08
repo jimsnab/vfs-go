@@ -2,10 +2,12 @@ package vfs
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -57,39 +59,53 @@ type (
 	}
 
 	StoreStats struct {
-		Sets           uint64
-		Deletes        uint64
-		Keys           uint64
-		KeysRemoved    uint64
-		ShardsAccessed uint64
-		ShardsRemoved  uint64
+		Sets          uint64
+		Deletes       uint64
+		Keys          uint64
+		KeysRemoved   uint64
+		ShardsOpened  uint64
+		ShardsClosed  uint64
+		ShardsRemoved uint64
 	}
 
 	store struct {
-		mu             sync.Mutex
-		ai             *avlIndex
-		shards         map[uint64]afero.File
-		accessed       map[uint64]time.Time
-		cfg            VfsConfig
-		keysRemoved    uint64
-		shardsAccessed uint64
-		shardsRemoved  uint64
-		refTables      map[string]*refTable
+		mu              sync.Mutex
+		ai              *avlIndex
+		shards          map[uint64]afero.File
+		accessed        map[uint64]time.Time
+		cfg             VfsConfig
+		keysRemoved     uint64
+		shardsOpened    uint64
+		shardsClosed    uint64
+		shardsRemoved   uint64
+		refTables       map[string]*refTable
+		idleFileHandle  time.Duration
+		cleanupInterval time.Duration
+		wg              sync.WaitGroup
+		cancelFn        context.CancelFunc
 	}
+
+	prestartCallback func(st *store)
 )
 
 func NewStore(cfg *VfsConfig) (st Store, err error) {
+	return newStoreInternal(cfg, nil)
+}
+
+func newStoreInternal(cfg *VfsConfig, psfn prestartCallback) (st *store, err error) {
 	ai, err := newIndex(cfg, kMainIndexExt)
 	if err != nil {
 		return
 	}
 
 	s := &store{
-		ai:        ai,
-		cfg:       *cfg,
-		shards:    map[uint64]afero.File{},
-		accessed:  map[uint64]time.Time{},
-		refTables: map[string]*refTable{},
+		ai:              ai,
+		cfg:             *cfg,
+		shards:          map[uint64]afero.File{},
+		accessed:        map[uint64]time.Time{},
+		refTables:       map[string]*refTable{},
+		idleFileHandle:  time.Minute * 15,
+		cleanupInterval: time.Minute,
 	}
 
 	if s.cfg.ShardDurationDays == 0 {
@@ -114,8 +130,21 @@ func NewStore(cfg *VfsConfig) (st Store, err error) {
 		}
 
 		s.refTables[name] = tbl
+	}
+
+	if psfn != nil {
+		psfn(s)
+	}
+
+	for _, tbl := range s.refTables {
 		tbl.Start()
 	}
+
+	ctx, cancelFn := context.WithCancel(context.Background())
+	s.cancelFn = cancelFn
+
+	s.wg.Add(1)
+	go s.run(ctx)
 
 	st = s
 	return
@@ -164,23 +193,30 @@ func (st *store) openShard(request uint64, forRead bool) (f afero.File, shard ui
 		}
 
 		st.shards[shard] = f
-		st.accessed[shard] = time.Now().UTC()
-		st.shardsAccessed++
-
-		cutoff := time.Now().UTC().Add(-time.Minute)
-		for sh, ts := range st.accessed {
-			if ts.Before(cutoff) {
-				f2, exists := st.shards[sh]
-				if exists {
-					f2.Close()
-					delete(st.shards, sh)
-				}
-				delete(st.accessed, sh)
-			}
-		}
+		st.shardsOpened++
 	}
+	st.accessed[shard] = time.Now().UTC()
 
 	return
+}
+
+// Background task worker
+func (st *store) closeIdleShards() {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	cutoff := time.Now().UTC().Add(-st.idleFileHandle)
+	for sh, ts := range st.accessed {
+		if ts.Before(cutoff) {
+			f, exists := st.shards[sh]
+			if exists {
+				f.Close()
+				delete(st.shards, sh)
+				st.shardsClosed++
+			}
+			delete(st.accessed, sh)
+		}
+	}
 }
 
 func (st *store) purgeShards(cutoff time.Time) (err error) {
@@ -338,7 +374,7 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 
 		for name, refKey := range record.RefKeys {
 			rtxn := refTableTxns[name]
-			refRecords := []RefRecord{{refKey.KeyGroup, refKey.ValueKey, record.Key}}
+			refRecords := []refRecord{{refKey.KeyGroup, refKey.ValueKey, record.Key}}
 			if err = rtxn.AddReferences(refRecords); err != nil {
 				return
 			}
@@ -378,6 +414,10 @@ func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, e
 		var f afero.File
 		f, _, err = st.openShard(shard, true)
 		if err != nil {
+			// key indexed but shard does not exist; treat if not indexed
+			if strings.HasSuffix(err.Error(), os.ErrNotExist.Error()) {
+				err = nil
+			}
 			return
 		}
 
@@ -471,12 +511,13 @@ func (st *store) Stats() StoreStats {
 	indexStats := st.ai.Stats()
 
 	return StoreStats{
-		Sets:           indexStats.Sets,
-		Deletes:        indexStats.Deletes,
-		Keys:           indexStats.NodeCount,
-		KeysRemoved:    st.keysRemoved,
-		ShardsAccessed: st.shardsAccessed,
-		ShardsRemoved:  st.shardsRemoved,
+		Sets:          indexStats.Sets,
+		Deletes:       indexStats.Deletes,
+		Keys:          indexStats.NodeCount,
+		KeysRemoved:   st.keysRemoved,
+		ShardsOpened:  st.shardsOpened,
+		ShardsClosed:  st.shardsClosed,
+		ShardsRemoved: st.shardsRemoved,
 	}
 }
 
@@ -499,7 +540,36 @@ func (st *store) Sync() (err error) {
 	return
 }
 
+func (st *store) run(ctx context.Context) {
+	defer st.wg.Done()
+
+	ticker1 := time.NewTicker(st.cleanupInterval)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-ticker1.C:
+			st.closeIdleShards()
+		}
+	}
+}
+
 func (st *store) Close() (err error) {
+	// stop the run() goroutine
+	st.mu.Lock()
+	if st.cancelFn == nil {
+		err = os.ErrClosed
+		st.mu.Unlock()
+		return
+	}
+	st.cancelFn()
+	st.cancelFn = nil
+	st.mu.Unlock()
+	st.wg.Wait()
+
+	// close the resources
 	st.mu.Lock()
 	defer st.mu.Unlock()
 

@@ -89,7 +89,7 @@ func TestRefAndGetOne(t *testing.T) {
 	valueKey := rts.testKeys[0]
 	storeKey := rts.testKeys[1]
 
-	records := []RefRecord{{kTestKeyGroup, valueKey, storeKey}}
+	records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
 	terr := tbl.AddReferences(records)
 	if terr != ErrNotStarted {
 		t.Fatal(terr)
@@ -128,7 +128,7 @@ func TestRefAndGetTwo(t *testing.T) {
 	valueKey2 := rts.testKeys[1]
 	storeKey := rts.testKeys[2]
 
-	records := []RefRecord{{kTestKeyGroup, valueKey1, storeKey}, {kTestKeyGroup, valueKey2, storeKey}}
+	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey}, {kTestKeyGroup, valueKey2, storeKey}}
 	if err = tbl.AddReferences(records); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestRefAndGetOneWithDup(t *testing.T) {
 	valueKey := rts.testKeys[0]
 	storeKey := rts.testKeys[1]
 
-	records := []RefRecord{{kTestKeyGroup, valueKey, storeKey}, {kTestKeyGroup, valueKey, storeKey}}
+	records := []refRecord{{kTestKeyGroup, valueKey, storeKey}, {kTestKeyGroup, valueKey, storeKey}}
 	if err = tbl.AddReferences(records); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestRefTwoByTwo(t *testing.T) {
 	storeKey1 := rts.testKeys[2]
 	storeKey2 := rts.testKeys[3]
 
-	records := []RefRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}}
+	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}}
 	if err = tbl.AddReferences(records); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestRefThreeByTwo(t *testing.T) {
 	storeKey1 := rts.testKeys[3]
 	storeKey2 := rts.testKeys[4]
 
-	records := []RefRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}, {kTestKeyGroup, valueKey3, storeKey2}}
+	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}, {kTestKeyGroup, valueKey3, storeKey2}}
 	if err = tbl.AddReferences(records); err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +316,7 @@ func TestRefTwoByThree(t *testing.T) {
 	storeKey2 := rts.testKeys[3]
 	storeKey3 := rts.testKeys[4]
 
-	records := []RefRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}, {kTestKeyGroup, valueKey1, storeKey3}}
+	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}, {kTestKeyGroup, valueKey1, storeKey3}}
 	if err = tbl.AddReferences(records); err != nil {
 		t.Fatal(err)
 	}
@@ -366,12 +366,12 @@ func TestRefAndGetOneThenOne(t *testing.T) {
 	valueKey2 := rts.testKeys[1]
 	storeKey := rts.testKeys[2]
 
-	records := []RefRecord{{kTestKeyGroup, valueKey1, storeKey}}
+	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey}}
 	if err = tbl.AddReferences(records); err != nil {
 		t.Fatal(err)
 	}
 
-	records = []RefRecord{{kTestKeyGroup, valueKey2, storeKey}}
+	records = []refRecord{{kTestKeyGroup, valueKey2, storeKey}}
 	if err = tbl.AddReferences(records); err != nil {
 		t.Fatal(err)
 	}
@@ -417,12 +417,12 @@ func TestRefAndGetOneThenAppend(t *testing.T) {
 	storeKey1 := rts.testKeys[1]
 	storeKey2 := rts.testKeys[2]
 
-	records := []RefRecord{{kTestKeyGroup, valueKey, storeKey1}}
+	records := []refRecord{{kTestKeyGroup, valueKey, storeKey1}}
 	if err = tbl.AddReferences(records); err != nil {
 		t.Fatal(err)
 	}
 
-	records = []RefRecord{{kTestKeyGroup, valueKey, storeKey2}}
+	records = []refRecord{{kTestKeyGroup, valueKey, storeKey2}}
 	if err = tbl.AddReferences(records); err != nil {
 		t.Fatal(err)
 	}
@@ -467,7 +467,7 @@ func TestRefAndGet5(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			records := []RefRecord{{kTestKeyGroup, valueKey, storeKey}}
+			records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
 			if err = tbl.AddReferences(records); err != nil {
 				panic(err)
 			}
@@ -510,7 +510,7 @@ func TestRefAndGet5000(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			records := []RefRecord{{kTestKeyGroup, valueKey, storeKey}}
+			records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
 			if err = tbl.AddReferences(records); err != nil {
 				panic(err)
 			}
@@ -713,7 +713,7 @@ func TestRefAndGetMany(t *testing.T) {
 
 				mu.Lock()
 
-				records := make([]RefRecord, 0, 48)
+				records := make([]refRecord, 0, 48)
 				round := recordNumber
 				recordNumber++
 				newValueKeys := [][]byte{}
@@ -741,7 +741,7 @@ func TestRefAndGetMany(t *testing.T) {
 					}
 
 					// append an operation
-					records = append(records, RefRecord{keyGroupFromKey(valueKey), valueKey, storeKey})
+					records = append(records, refRecord{keyGroupFromKey(valueKey), valueKey, storeKey})
 
 					// track the expected storage
 					allValueKeys[recordNumber] = valueKey
@@ -886,4 +886,114 @@ func TestRefAndGetMany(t *testing.T) {
 		t.Fatal("index keys were not removed")
 	}
 
+}
+
+func TestStoreRefTablePurge(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	cfg := VfsConfig{
+		IndexDir:           ts.testDir,
+		DataDir:            ts.testDir,
+		BaseName:           "the.test",
+		Sync:               true,
+		ShardDurationDays:  0.00000116,
+		ShardRetentionDays: 0.00000463,
+		RecoveryEnabled:    true,
+		ReferenceTables:    []string{"a"},
+	}
+
+	fmt.Printf("shard life: %d ms\n", uint64(24*60*60*1000*cfg.ShardDurationDays))
+	fmt.Printf("shard retention: %d ms\n", uint64(24*60*60*1000*cfg.ShardRetentionDays))
+
+	table, err := newRefTable(&cfg, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	table.cleanupInterval = time.Millisecond * 25
+	table.idleFileHandle = time.Millisecond * 75
+	table.Start()
+	defer table.Close()
+
+	var mu sync.Mutex
+	readShard := map[uint64][]byte{}
+	lastShard := uint64(0)
+	add := true
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		end := time.Now().Add(time.Millisecond * 700)
+		for {
+			if time.Now().After(end) {
+				return
+			}
+
+			key := make([]byte, 20)
+			rand.Read(key)
+			valueKey := make([]byte, 20)
+			rand.Read(valueKey)
+
+			shard := table.calcShard(time.Now().UTC())
+			if shard != lastShard {
+				if add {
+					mu.Lock()
+					readShard[shard] = valueKey
+					mu.Unlock()
+					add = false
+				} else {
+					add = true
+				}
+				lastShard = shard
+			}
+
+			records := []refRecord{{"a", valueKey, key}}
+			err := table.AddReferences(records)
+			if err != nil {
+				panic(err)
+			}
+
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		end := time.Now().Add(time.Millisecond * 700)
+		for {
+			if time.Now().After(end) {
+				return
+			}
+
+			err := table.PurgeOld(time.Now().UTC().Add(-400 * time.Millisecond))
+			if err != nil {
+				panic(err)
+			}
+
+			mu.Lock()
+			for _, vk := range readShard {
+				if _, err = table.RetrieveReferences("a", vk); err != nil {
+					panic(err)
+				}
+			}
+			mu.Unlock()
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
+
+	stats := table.Stats()
+	if stats.ShardsClosed > 8 {
+		t.Fatal("too many shards closed")
+	}
+	delta := stats.ShardsOpened - stats.ShardsClosed
+	if delta < 2 {
+		t.Fatal("not enough older shards still open")
+	}
+	if stats.ShardsRemoved < 3 {
+		t.Fatal("too few shards removed")
+	}
+	fmt.Printf("opened: %d closed: %d removed: %d\n", stats.ShardsOpened, stats.ShardsClosed, stats.ShardsRemoved)
 }
