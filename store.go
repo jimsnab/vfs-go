@@ -390,6 +390,25 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 	return
 }
 
+// temporary
+func (st *store) TestHasKey(keyGroup string, key []byte) (found bool, shard uint64, position uint64, err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	txn, err := st.ai.BeginTransaction(nil)
+	if err != nil {
+		return
+	}
+	defer func() {
+		terr := st.ai.txn.EndTransaction()
+		if err == nil {
+			err = terr
+		}
+	}()
+
+	return txn.Get(keyGroup, key)
+}
+
 func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -415,6 +434,7 @@ func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, e
 		f, _, err = st.openShard(shard, true)
 		if err != nil {
 			// key indexed but shard does not exist; treat if not indexed
+			fmt.Printf("BUGBUG key %s indexed in group %s but shard %d does not exist\n", string(key), keyGroup, shard)
 			if strings.HasSuffix(err.Error(), os.ErrNotExist.Error()) {
 				err = nil
 			}
