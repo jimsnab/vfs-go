@@ -592,7 +592,7 @@ func TestStoreAndGetMany(t *testing.T) {
 			}()
 		} else {
 			// block to limit the go routine growth
-			if err = st.PurgeOld(nil); err != nil {
+			if _, err = st.PurgeOld(nil); err != nil {
 				t.Fatal(err)
 				return
 			}
@@ -868,7 +868,7 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 				refTable.index.removed = removedRefKeys
 			}
 
-			if err = st.PurgeOld(nil); err != nil {
+			if _, err = st.PurgeOld(nil); err != nil {
 				t.Fatal(&err)
 				return
 			}
@@ -965,9 +965,14 @@ func TestStorePurge(t *testing.T) {
 				return
 			}
 
-			err := st.PurgeOld(nil)
+			cutoff, err := st.PurgeOld(nil)
 			if err != nil {
 				panic(err)
+			}
+
+			period := time.Since(cutoff)
+			if period.Milliseconds() > 100 {
+				panic("unexpected cutoff")
 			}
 
 			mu.Lock()

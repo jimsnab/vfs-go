@@ -34,7 +34,7 @@ type (
 		// The caller can optionally provide a callback that is invoked after the disk
 		// is synchronized. If onComplete is nil, the function blocks until the deletion
 		// is complete.
-		PurgeOld(onComplete CommitCompleted) (err error)
+		PurgeOld(onComplete CommitCompleted) (cutoff time.Time, err error)
 
 		// The store metrics
 		Stats() StoreStats
@@ -467,24 +467,24 @@ func (st *store) RetrieveReferences(name, keyGroup string, valueKey []byte) (ref
 	return
 }
 
-func (st *store) PurgeOld(onComplete CommitCompleted) (err error) {
+func (st *store) PurgeOld(onComplete CommitCompleted) (cutoff time.Time, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	cutoff = time.Now().UTC().Add(-(time.Duration(time.Hour * 24 * time.Duration(st.cfg.ShardRetentionDays))))
+
 	if onComplete == nil {
-		err = st.doPurgeOld()
+		err = st.doPurgeOld(cutoff)
 	} else {
 		go func() {
-			failure := st.doPurgeOld()
+			failure := st.doPurgeOld(cutoff)
 			onComplete(failure)
 		}()
 	}
 	return
 }
 
-func (st *store) doPurgeOld() (err error) {
-	cutoff := time.Now().UTC().Add(-(time.Duration(time.Hour * 24 * time.Duration(st.cfg.ShardRetentionDays))))
-
+func (st *store) doPurgeOld(cutoff time.Time) (err error) {
 	before := st.ai.Stats()
 
 	if err = st.ai.doRemoveBefore(cutoff); err != nil {
