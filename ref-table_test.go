@@ -114,6 +114,60 @@ func TestRefAndGetOne(t *testing.T) {
 	}
 }
 
+func TestRefAndGetOneReopen(t *testing.T) {
+	rts := refTestInitialize(t)
+
+	tbl, err := newRefTable(&rts.cfg, "example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tbl.Close()
+
+	valueKey := rts.testKeys[0]
+	storeKey := rts.testKeys[1]
+
+	records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
+	terr := tbl.AddReferences(records)
+	if terr != ErrNotStarted {
+		t.Fatal(terr)
+	}
+
+	tbl.cleanupInterval = time.Millisecond * 20
+	tbl.idleFileHandle = time.Millisecond * 40
+
+	tbl.Start()
+	if err = tbl.AddReferences(records); err != nil {
+		t.Fatal(err)
+	}
+
+	// wait for file handle close
+	for {
+		stats := tbl.Stats()
+		if stats.ShardsClosed == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond * 20)
+	}
+
+	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(refs) != 1 {
+		t.Fatal("wrong length")
+	}
+
+	if !bytes.Equal(refs[0], storeKey) {
+		t.Fatal("refs not equal")
+	}
+
+	stats := tbl.Stats()
+	if stats.ShardsOpened != 2 || stats.ShardsClosed != 1 {
+		t.Fatal("unexpected open/close counts")
+	}
+}
+
 func TestRefAndGetTwo(t *testing.T) {
 	rts := refTestInitialize(t)
 

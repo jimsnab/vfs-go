@@ -62,6 +62,68 @@ func TestStoreAndGetOne(t *testing.T) {
 	}
 }
 
+func TestStoreAndGetOneReopen(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	cfg := VfsConfig{
+		IndexDir:           ts.testDir,
+		DataDir:            ts.testDir,
+		BaseName:           "the.test",
+		Sync:               true,
+		ShardDurationDays:  0.03,
+		ShardRetentionDays: 0.06,
+		RecoveryEnabled:    true,
+	}
+
+	st, err := newStoreInternal(&cfg, func(st *store) {
+		st.cleanupInterval = time.Millisecond * 20
+		st.idleFileHandle = time.Millisecond * 40
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	key := make([]byte, 20)
+	rand.Read(key)
+	datalen := mrand.Intn(16384) + 1
+	data := make([]byte, datalen)
+	rand.Read(data)
+
+	records := []StoreRecord{{kTestKeyGroup, key, data, nil}}
+
+	if err = st.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// make sure file handle gets closed
+	for {
+		stats := st.Stats()
+		if stats.ShardsClosed == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond * 20)
+	}
+
+	content, err := st.RetrieveContent(kTestKeyGroup, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if content == nil {
+		t.Fatal("content not found")
+	}
+
+	if !bytes.Equal(data, content) {
+		t.Fatal("content not equal")
+	}
+
+	stats := st.Stats()
+	if stats.ShardsOpened != 2 || stats.ShardsClosed != 1 {
+		t.Fatal("unexpected open/close counts")
+	}
+}
+
 func TestStoreAndGetOneReloaded(t *testing.T) {
 	ts := testInitialize(t, false)
 
