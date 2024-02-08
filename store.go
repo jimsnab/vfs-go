@@ -44,6 +44,8 @@ type (
 
 		// Close I/O.
 		Close() error
+
+		TestHasKey(keyGroup string, key []byte) (found bool, shard uint64, position uint64, err error)
 	}
 
 	StoreRecord struct {
