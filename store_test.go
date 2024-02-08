@@ -6,11 +6,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	mrand "math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jimsnab/afero"
 )
 
 func TestStoreAndGetOne(t *testing.T) {
@@ -55,6 +59,217 @@ func TestStoreAndGetOne(t *testing.T) {
 
 	if !bytes.Equal(data, content) {
 		t.Fatal("content not equal")
+	}
+}
+
+func TestStoreAndGetOneReloaded(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	cfg := VfsConfig{
+		IndexDir:           ts.testDir,
+		DataDir:            ts.testDir,
+		BaseName:           "the.test",
+		Sync:               true,
+		ShardDurationDays:  0.03,
+		ShardRetentionDays: 0.06,
+		RecoveryEnabled:    true,
+		ReferenceTables:    []string{"x"},
+	}
+
+	st1, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key := make([]byte, 20)
+	rand.Read(key)
+	datalen := mrand.Intn(16384) + 1
+	data := make([]byte, datalen)
+	rand.Read(data)
+	valueKey := make([]byte, 20)
+	rand.Read(valueKey)
+
+	records := []StoreRecord{{kTestKeyGroup, key, data, map[string]StoreReference{"x": {keyGroupFromKey(valueKey), valueKey}}}}
+
+	if err = st1.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	st1.Close()
+
+	st2, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := st2.RetrieveContent(kTestKeyGroup, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if content == nil {
+		t.Fatal("content not found")
+	}
+
+	if !bytes.Equal(data, content) {
+		t.Fatal("content not equal")
+	}
+
+	st2.Close()
+
+	st3, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refs, err := st3.RetrieveReferences("x", keyGroupFromKey(valueKey), valueKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 {
+		t.Fatal("didn't get reference")
+	}
+
+	if !bytes.Equal(refs[0], key) {
+		t.Fatal("reference is not to the key")
+	}
+
+	st3.Close()
+}
+
+func TestStoreAndGetTwoReloaded(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	cfg := VfsConfig{
+		IndexDir:           ts.testDir,
+		DataDir:            ts.testDir,
+		BaseName:           "the.test",
+		Sync:               true,
+		ShardDurationDays:  0.03,
+		ShardRetentionDays: 0.06,
+		RecoveryEnabled:    true,
+		ReferenceTables:    []string{"x"},
+	}
+
+	st1, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key1 := make([]byte, 20)
+	rand.Read(key1)
+	datalen := mrand.Intn(16384) + 1
+	data1 := make([]byte, datalen)
+	rand.Read(data1)
+	valueKey1 := make([]byte, 20)
+	rand.Read(valueKey1)
+
+	records := []StoreRecord{{kTestKeyGroup, key1, data1, map[string]StoreReference{"x": {kTestKeyGroup, valueKey1}}}}
+
+	if err = st1.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	st1.Close()
+
+	st2, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key2 := make([]byte, 20)
+	rand.Read(key2)
+	datalen = mrand.Intn(16384) + 1
+	data2 := make([]byte, datalen)
+	rand.Read(data2)
+	valueKey2 := make([]byte, 20)
+	rand.Read(valueKey2)
+
+	records = []StoreRecord{{kTestKeyGroup, key2, data2, map[string]StoreReference{"x": {kTestKeyGroup, valueKey2}}}}
+
+	if err = st2.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := st2.RetrieveContent(kTestKeyGroup, key1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if content == nil {
+		t.Fatal("content not found")
+	}
+
+	if !bytes.Equal(data1, content) {
+		t.Fatal("content not equal")
+	}
+
+	st2.Close()
+
+	st3, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refs, err := st3.RetrieveReferences("x", kTestKeyGroup, valueKey1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 {
+		t.Fatal("didn't get reference")
+	}
+
+	if !bytes.Equal(refs[0], key1) {
+		t.Fatal("reference is not to the key 1")
+	}
+
+	refs, err = st3.RetrieveReferences("x", kTestKeyGroup, valueKey2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 {
+		t.Fatal("didn't get reference")
+	}
+
+	if !bytes.Equal(refs[0], key2) {
+		t.Fatal("reference is not to the key 2")
+	}
+
+	st3.Close()
+
+	err = afero.Walk(AppFs, cfg.IndexDir, func(path string, info fs.FileInfo, err error) error {
+		name := info.Name()
+		if name == "data" {
+			return nil
+		}
+
+		// main index
+		if name == "the.test.test.dt1" || name == "the.test.test.dt2" {
+			return nil
+		}
+
+		// ref table files
+		if name == "the.test.test.x.dt5" || name == "the.test.test.x.dt6" {
+			return nil
+		}
+
+		parts := strings.Split(name, ".")
+
+		// main data
+		if len(parts) == 4 && parts[0] == "the" && parts[1] == "test" && parts[3] == "dt3" {
+			return nil
+		}
+
+		// reference arrays
+		if len(parts) == 5 && parts[0] == "the" && parts[1] == "test" && parts[2] == "x" && parts[4] == "dt4" {
+			return nil
+		}
+
+		// unexpected file
+		return fmt.Errorf("unexpected file: %s", name)
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
