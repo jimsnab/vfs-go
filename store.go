@@ -45,7 +45,11 @@ type (
 		// Close I/O.
 		Close() error
 
-		TestHasKey(keyGroup string, key []byte) (found bool, shard uint64, position uint64, err error)
+		// Iterates the index and returns each key
+		IterateByKeys(iter StoreIterator) (err error)
+
+		// Iterates the keys in oldest to newest order
+		IterateByTimestamp(iter StoreIterator) (err error)
 	}
 
 	StoreRecord struct {
@@ -69,6 +73,8 @@ type (
 		ShardsClosed  uint64
 		ShardsRemoved uint64
 	}
+
+	StoreIterator func(key []byte, timestamp time.Time) (err error)
 
 	store struct {
 		mu              sync.Mutex
@@ -392,25 +398,6 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 	return
 }
 
-// temporary
-func (st *store) TestHasKey(keyGroup string, key []byte) (found bool, shard uint64, position uint64, err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-
-	txn, err := st.ai.BeginTransaction(nil)
-	if err != nil {
-		return
-	}
-	defer func() {
-		terr := st.ai.txn.EndTransaction()
-		if err == nil {
-			err = terr
-		}
-	}()
-
-	return txn.Get(keyGroup, key)
-}
-
 func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -436,7 +423,6 @@ func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, e
 		f, _, err = st.openShard(shard, true)
 		if err != nil {
 			// key indexed but shard does not exist; treat if not indexed
-			fmt.Printf("BUGBUG key %s indexed in group %s but shard %d does not exist\n", string(key), keyGroup, shard)
 			if strings.HasSuffix(err.Error(), os.ErrNotExist.Error()) {
 				err = nil
 			}
@@ -493,7 +479,8 @@ func (st *store) PurgeOld(onComplete CommitCompleted) (cutoff time.Time, err err
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	cutoff = time.Now().UTC().Add(-(time.Duration(time.Hour * 24 * time.Duration(st.cfg.ShardRetentionDays))))
+	retentionPeriod := time.Duration(float64(time.Hour * 24) * st.cfg.ShardRetentionDays)
+	cutoff = time.Now().UTC().Add(-retentionPeriod)
 
 	if onComplete == nil {
 		err = st.doPurgeOld(cutoff)
@@ -576,6 +563,34 @@ func (st *store) run(ctx context.Context) {
 			st.closeIdleShards()
 		}
 	}
+}
+
+func (st *store) IterateByKeys(iter StoreIterator) (err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if st.cancelFn == nil {
+		err = os.ErrClosed
+		return
+	}
+
+	return st.ai.IterateByKeys(func(node *avlNode) error {
+		return iter(node.key, time.Unix(node.timestamp / 1000000000, node.timestamp % 1000000000))
+	})
+}
+
+func (st *store) IterateByTimestamp(iter StoreIterator) (err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if st.cancelFn == nil {
+		err = os.ErrClosed
+		return
+	}
+
+	return st.ai.IterateByTimestamp(func(node *avlNode) error {
+		return iter(node.key, time.Unix(node.timestamp / 1000000000, node.timestamp % 1000000000))
+	})
 }
 
 func (st *store) Close() (err error) {

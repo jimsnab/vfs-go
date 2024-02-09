@@ -977,7 +977,7 @@ func TestStorePurge(t *testing.T) {
 		BaseName:           "the.test",
 		Sync:               true,
 		ShardDurationDays:  0.00000116,
-		ShardRetentionDays: 0.00000463,
+		ShardRetentionDays: 0.00000579,
 		RecoveryEnabled:    true,
 		ReferenceTables:    []string{"a"},
 	}
@@ -1052,7 +1052,7 @@ func TestStorePurge(t *testing.T) {
 			}
 
 			period := time.Since(cutoff)
-			if period.Milliseconds() > 100 {
+			if period.Milliseconds() < 450 {
 				panic("unexpected cutoff")
 			}
 
@@ -1070,6 +1070,8 @@ func TestStorePurge(t *testing.T) {
 	wg.Wait()
 
 	stats := st.Stats()
+	fmt.Printf("opened: %d closed: %d removed: %d\n", stats.ShardsOpened, stats.ShardsClosed, stats.ShardsRemoved)
+
 	if stats.ShardsClosed > 8 {
 		t.Fatal("too many shards closed")
 	}
@@ -1080,5 +1082,4 @@ func TestStorePurge(t *testing.T) {
 	if stats.ShardsRemoved < 3 {
 		t.Fatal("too few shards removed")
 	}
-	fmt.Printf("opened: %d closed: %d removed: %d\n", stats.ShardsOpened, stats.ShardsClosed, stats.ShardsRemoved)
 }
