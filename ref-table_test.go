@@ -1,7 +1,6 @@
 package vfs
 
 import (
-	"bytes"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -18,7 +17,7 @@ type (
 	refTestState struct {
 		originalFs afero.Fs
 		testDir    string
-		testKeys   [][]byte
+		testKeys   [][20]byte
 		cfg        VfsConfig
 	}
 )
@@ -38,10 +37,10 @@ func refTestInitializeEx(t *testing.T, multishard bool) (rts *refTestState) {
 		t.Fatal(err)
 	}
 
-	testKeys := make([][]byte, 0, 10)
+	testKeys := make([][20]byte, 0, 10)
 	for i := 0; i < 10; i++ {
-		key := make([]byte, 20)
-		n, err := rand.Read(key)
+		key := [20]byte{}
+		n, err := rand.Read(key[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,7 +108,7 @@ func TestRefAndGetOne(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey) {
+	if !keysEqual(refs[0], storeKey) {
 		t.Fatal("refs not equal")
 	}
 }
@@ -158,7 +157,7 @@ func TestRefAndGetOneReopen(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey) {
+	if !keysEqual(refs[0], storeKey) {
 		t.Fatal("refs not equal")
 	}
 
@@ -196,7 +195,7 @@ func TestRefAndGetTwo(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey) {
+	if !keysEqual(refs[0], storeKey) {
 		t.Fatal("refs not equal")
 	}
 
@@ -209,7 +208,7 @@ func TestRefAndGetTwo(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey) {
+	if !keysEqual(refs[0], storeKey) {
 		t.Fatal("refs not equal")
 	}
 }
@@ -241,7 +240,7 @@ func TestRefAndGetOneWithDup(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey) {
+	if !keysEqual(refs[0], storeKey) {
 		t.Fatal("refs[0] not equal")
 	}
 }
@@ -275,7 +274,7 @@ func TestRefTwoByTwo(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey1) {
+	if !keysEqual(refs[0], storeKey1) {
 		t.Fatal("refs[0] not equal")
 	}
 
@@ -288,7 +287,7 @@ func TestRefTwoByTwo(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey2) {
+	if !keysEqual(refs[0], storeKey2) {
 		t.Fatal("refs[0] not equal")
 	}
 }
@@ -323,7 +322,7 @@ func TestRefThreeByTwo(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey1) {
+	if !keysEqual(refs[0], storeKey1) {
 		t.Fatal("refs[0] not equal")
 	}
 
@@ -336,7 +335,7 @@ func TestRefThreeByTwo(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey2) {
+	if !keysEqual(refs[0], storeKey2) {
 		t.Fatal("refs[0] not equal")
 	}
 
@@ -349,7 +348,7 @@ func TestRefThreeByTwo(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey2) {
+	if !keysEqual(refs[0], storeKey2) {
 		t.Fatal("refs[0] not equal")
 	}
 }
@@ -384,11 +383,11 @@ func TestRefTwoByThree(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey1) {
+	if !keysEqual(refs[0], storeKey1) {
 		t.Fatal("refs[0] not equal")
 	}
 
-	if !bytes.Equal(refs[1], storeKey3) {
+	if !keysEqual(refs[1], storeKey3) {
 		t.Fatal("refs[1] not equal")
 	}
 
@@ -401,7 +400,7 @@ func TestRefTwoByThree(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey2) {
+	if !keysEqual(refs[0], storeKey2) {
 		t.Fatal("refs[0] not equal")
 	}
 }
@@ -439,7 +438,7 @@ func TestRefAndGetOneThenOne(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey) {
+	if !keysEqual(refs[0], storeKey) {
 		t.Fatal("refs not equal")
 	}
 
@@ -452,7 +451,7 @@ func TestRefAndGetOneThenOne(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey) {
+	if !keysEqual(refs[0], storeKey) {
 		t.Fatal("refs not equal")
 	}
 }
@@ -490,11 +489,11 @@ func TestRefAndGetOneThenAppend(t *testing.T) {
 		t.Fatal("wrong length")
 	}
 
-	if !bytes.Equal(refs[0], storeKey1) {
+	if !keysEqual(refs[0], storeKey1) {
 		t.Fatal("refs[0] not equal")
 	}
 
-	if !bytes.Equal(refs[1], storeKey2) {
+	if !keysEqual(refs[1], storeKey2) {
 		t.Fatal("refs[1] not equal")
 	}
 }
@@ -509,14 +508,14 @@ func TestRefAndGet5(t *testing.T) {
 	tbl.Start()
 	defer tbl.Close()
 
-	m := map[[20]byte][]byte{}
+	m := map[[20]byte][20]byte{}
 	var wg sync.WaitGroup
 
 	for i := 0; i < 5; i++ {
 		valueKey := rts.testKeys[i]
 		storeKey := rts.testKeys[mrand.Intn(5)+5]
 
-		m[[20]byte(valueKey)] = storeKey
+		m[valueKey] = storeKey
 
 		wg.Add(1)
 		go func() {
@@ -530,7 +529,7 @@ func TestRefAndGet5(t *testing.T) {
 	wg.Wait()
 
 	for valueKey, storeKey := range m {
-		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey[:])
+		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -539,7 +538,7 @@ func TestRefAndGet5(t *testing.T) {
 			t.Fatal("wrong length")
 		}
 
-		if !bytes.Equal(refs[0], storeKey) {
+		if !keysEqual(refs[0], storeKey) {
 			t.Fatal("refs[0] not equal")
 		}
 	}
@@ -585,7 +584,7 @@ func TestRefAndGet5000(t *testing.T) {
 		for _, ref := range refs {
 			found := false
 			for _, sk := range rts.testKeys[5:10] {
-				if bytes.Equal(ref, sk) {
+				if !keysEqual(ref, sk) {
 					found = true
 					break
 				}
@@ -610,10 +609,10 @@ func TestRefAndGetMany(t *testing.T) {
 	table.Start()
 	defer table.Close()
 
-	allValueKeys := map[int][]byte{}
-	allValueKeysList := [][]byte{}
-	allStoreKeys := map[[20]byte][][]byte{}
-	allStoreKeysList := [][]byte{}
+	allValueKeys := map[int][20]byte{}
+	allValueKeysList := [][20]byte{}
+	allStoreKeys := map[[20]byte][][20]byte{}
+	allStoreKeysList := [][20]byte{}
 
 	var fatal atomic.Pointer[error]
 	var mu sync.Mutex
@@ -674,12 +673,12 @@ func TestRefAndGetMany(t *testing.T) {
 				mu.Lock()
 				defer mu.Unlock()
 
-				var valueKey []byte
+				var valueKey [20]byte
 				var shouldExist bool
 				if op == 0 || len(allValueKeysList) == 0 {
 					// try a key that won't exist
-					buf := make([]byte, 20)
-					rand.Read(buf)
+					buf := [20]byte{}
+					rand.Read(buf[:])
 					valueKey = buf
 					shouldExist = false
 				} else {
@@ -701,7 +700,7 @@ func TestRefAndGetMany(t *testing.T) {
 						// might have been purged - ensure it still should exist
 						shouldExist = false
 						for _, key := range allValueKeysList {
-							if bytes.Equal(valueKey, key) {
+							if !keysEqual(valueKey, key) {
 								shouldExist = true
 								break
 							}
@@ -726,7 +725,7 @@ func TestRefAndGetMany(t *testing.T) {
 							largestList = len(refs)
 						}
 
-						expectedStoreKeys := allStoreKeys[[20]byte(valueKey)]
+						expectedStoreKeys := allStoreKeys[valueKey]
 						if len(expectedStoreKeys) == 0 {
 							err = errors.New("should have at least one expected store key")
 							fatal.Store(&err)
@@ -736,13 +735,13 @@ func TestRefAndGetMany(t *testing.T) {
 						found := map[[20]byte]struct{}{}
 						for _, ref := range refs {
 							for _, sk := range expectedStoreKeys {
-								if bytes.Equal(ref, sk) {
-									if _, prior := found[[20]byte(sk)]; prior {
+								if !keysEqual(ref, sk) {
+									if _, prior := found[sk]; prior {
 										err = errors.New("store key array should not have dups")
 										fatal.Store(&err)
 										return
 									}
-									found[[20]byte(sk)] = struct{}{}
+									found[sk] = struct{}{}
 									break
 								}
 							}
@@ -770,27 +769,27 @@ func TestRefAndGetMany(t *testing.T) {
 				records := make([]refRecord, 0, 48)
 				round := recordNumber
 				recordNumber++
-				newValueKeys := [][]byte{}
+				newValueKeys := [][20]byte{}
 
 				setSize := mrand.Intn(8) + 2
 				for i := 0; i < setSize; i++ {
 					// select a value key - op=2 for new value keys, op=3 for existing
-					var valueKey []byte
+					var valueKey [20]byte
 					if op == 2 || len(allValueKeysList) == 0 {
-						valueKey = make([]byte, 20)
-						rand.Read(valueKey)
+						valueKey = [20]byte{}
+						rand.Read(valueKey[:])
 						newValueKeys = append(newValueKeys, valueKey)
 					} else {
 						valueKey = allValueKeysList[mrand.Intn(len(allValueKeysList))]
 					}
 
 					// select a store key - 1/3 existing store key, 2/3 new store key
-					var storeKey []byte
+					var storeKey [20]byte
 					if mrand.Intn(3) == 0 && len(allStoreKeysList) > 0 {
-						storeKey = allStoreKeysList[mrand.Intn(len(allStoreKeysList))][:]
+						storeKey = allStoreKeysList[mrand.Intn(len(allStoreKeysList))]
 					} else {
-						storeKey = make([]byte, 20)
-						rand.Read(storeKey)
+						storeKey = [20]byte{}
+						rand.Read(storeKey[:])
 						allStoreKeysList = append(allStoreKeysList, storeKey)
 					}
 
@@ -800,15 +799,15 @@ func TestRefAndGetMany(t *testing.T) {
 					// track the expected storage
 					allValueKeys[recordNumber] = valueKey
 
-					vk := [20]byte(valueKey)
+					vk := valueKey
 					list := allStoreKeys[vk]
 					if len(list) == 0 {
-						list = make([][]byte, 0, 1)
+						list = make([][20]byte, 0, 1)
 					}
 
 					prior := false
 					for _, sk := range list {
-						if bytes.Equal(sk, storeKey) {
+						if !keysEqual(sk, storeKey) {
 							// already stored
 							prior = true
 							break
@@ -878,7 +877,7 @@ func TestRefAndGetMany(t *testing.T) {
 
 			survivors := map[[20]byte]struct{}{}
 			err = table.index.IterateByKeys(func(node *avlNode) error {
-				survivors[[20]byte(node.key)] = struct{}{}
+				survivors[node.key] = struct{}{}
 				return nil
 			})
 			if err != nil {
@@ -887,13 +886,13 @@ func TestRefAndGetMany(t *testing.T) {
 
 			purged := map[[20]byte]struct{}{}
 			toRemove := []int{}
-			newValueKeyList := [][]byte{}
+			newValueKeyList := [][20]byte{}
 			for i, valueKey := range allValueKeys {
-				_, survivor := survivors[[20]byte(valueKey)]
+				_, survivor := survivors[valueKey]
 				if survivor {
 					newValueKeyList = append(newValueKeyList, valueKey)
 				} else {
-					purged[[20]byte(valueKey)] = struct{}{}
+					purged[valueKey] = struct{}{}
 					toRemove = append(toRemove, i)
 				}
 			}
@@ -969,7 +968,7 @@ func TestStoreRefTablePurge(t *testing.T) {
 	defer table.Close()
 
 	var mu sync.Mutex
-	readShard := map[uint64][]byte{}
+	readShard := map[uint64][20]byte{}
 	lastShard := uint64(0)
 	add := true
 
@@ -983,10 +982,10 @@ func TestStoreRefTablePurge(t *testing.T) {
 				return
 			}
 
-			key := make([]byte, 20)
-			rand.Read(key)
-			valueKey := make([]byte, 20)
-			rand.Read(valueKey)
+			key := [20]byte{}
+			rand.Read(key[:])
+			valueKey := [20]byte{}
+			rand.Read(valueKey[:])
 
 			shard := table.calcShard(time.Now().UTC())
 			if shard != lastShard {

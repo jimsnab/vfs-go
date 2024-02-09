@@ -200,11 +200,11 @@ func (ai *avlIndex) doRemoveBefore(cutoff time.Time) (err error) {
 
 			// testing support
 			if ai.removed != nil {
-				ai.removed[[20]byte(node.Key())] = struct{}{}
+				ai.removed[node.key] = struct{}{}
 			}
 
 			// delete invalidates node
-			wasDeleted, err := tree.Delete(node.Key())
+			wasDeleted, err := tree.Delete(node.key)
 			if err != nil {
 				return err
 			}

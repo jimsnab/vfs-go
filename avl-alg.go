@@ -12,7 +12,7 @@ import (
 type (
 	avlOperation struct {
 		tree     *avlTree
-		key      []byte
+		key      [20]byte
 		shard    uint64
 		position uint64
 		leaf     *avlNode
@@ -21,7 +21,7 @@ type (
 )
 
 // locates a key in the AVL tree
-func (tree *avlTree) Find(key []byte) (node *avlNode, err error) {
+func (tree *avlTree) Find(key [20]byte) (node *avlNode, err error) {
 	n, err := tree.loadNode(tree.getRootOffset())
 	if err != nil {
 		return
@@ -32,7 +32,7 @@ func (tree *avlTree) Find(key []byte) (node *avlNode, err error) {
 			return
 		}
 
-		cmp := bytes.Compare(key, n.Key())
+		cmp := bytes.Compare(key[:], n.key[:])
 
 		if cmp == 0 {
 			node = n
@@ -52,7 +52,7 @@ func (tree *avlTree) Find(key []byte) (node *avlNode, err error) {
 }
 
 // adds a key to the AVL tree, or finds the existing node
-func (tree *avlTree) Set(key []byte, shard, position uint64) (node *avlNode, added bool, err error) {
+func (tree *avlTree) Set(key [20]byte, shard, position uint64) (node *avlNode, added bool, err error) {
 	op := &avlOperation{
 		tree:     tree,
 		key:      key,
@@ -78,9 +78,8 @@ func (tree *avlTree) Set(key []byte, shard, position uint64) (node *avlNode, add
 }
 
 // removes a key from the AVL tree, returing true if the key was found and deleted
-func (tree *avlTree) Delete(key []byte) (wasDeleted bool, err error) {
-	delKey := make([]byte, len(key))
-	copy(delKey, key)
+func (tree *avlTree) Delete(key [20]byte) (wasDeleted bool, err error) {
+	delKey := [20]byte(key)
 
 	if tree.keyIteration {
 		panic("delete is not permitted during iteration by keys")
@@ -136,7 +135,7 @@ func (op *avlOperation) insertNode(parentOffset uint64, node *avlNode) (outOffse
 		return
 	}
 
-	cmp := bytes.Compare(op.key, node.Key())
+	cmp := bytes.Compare(op.key[:], node.key[:])
 
 	if cmp == 0 {
 		op.leaf = node
@@ -199,7 +198,7 @@ func (op *avlOperation) deleteNode(node *avlNode) (outOffset uint64, rebalanced 
 		return
 	}
 
-	cmp := bytes.Compare(node.Key(), op.key)
+	cmp := bytes.Compare(node.key[:], op.key[:])
 
 	if cmp == 0 {
 		if node.Offset() == op.tree.nextByTime {
@@ -244,8 +243,8 @@ func (op *avlOperation) deleteNode(node *avlNode) (outOffset uint64, rebalanced 
 		if op.tree.nextByTime == node.Offset() {
 			op.tree.nextByTime = replacement.Offset() // delete during iteration - fix up next pointer
 		}
-		copy(op.key, replacement.Key())
-		cmp = bytes.Compare(node.Key(), op.key)
+		copy(op.key[:], replacement.key[:])
+		cmp = bytes.Compare(node.key[:], op.key[:])
 	}
 
 	if cmp >= 0 {

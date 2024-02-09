@@ -1,7 +1,6 @@
 package vfs
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -78,7 +77,7 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord) (err err
 		return
 	}
 
-	newArrays := make([][][]byte, 0, len(refRecords))
+	newArrays := make([][][20]byte, 0, len(refRecords))
 	valueKeyPos := make(map[[20]byte]int, len(refRecords))
 	valueKeyFromPos := make(map[int][20]byte, len(refRecords))
 	keyGroups := make(map[[20]byte]string, len(refRecords))
@@ -86,15 +85,14 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord) (err err
 	// combine records with previously stored arrays
 	for _, record := range refRecords {
 		// make a fixed array for the value key
-		valueKey := [20]byte{}
-		copy(valueKey[:], record.ValueKey)
+		valueKey := record.ValueKey
 
 		// append to prior refs array when two or more refs on the same value key;
 		// load the refs array for the first occurance of the value key
-		var refs [][]byte
+		var refs [][20]byte
 		vkp, exists := valueKeyPos[valueKey]
 		if !exists {
-			if refs, err = txn.doRetrieveReferences(record.KeyGroup, valueKey[:]); err != nil {
+			if refs, err = txn.doRetrieveReferences(record.KeyGroup, valueKey); err != nil {
 				return
 			}
 			vkp = len(newArrays)
@@ -113,7 +111,7 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord) (err err
 		// if reference is already in the list, don't add it again
 		found := false
 		for _, ref := range refs {
-			if bytes.Equal(ref, record.StoreKey) {
+			if keysEqual(ref, record.StoreKey) {
 				found = true
 				break
 			}
@@ -136,7 +134,7 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord) (err err
 
 		pos := 4
 		for _, ref := range refs {
-			copy(flat[pos:pos+20], ref)
+			copy(flat[pos:pos+20], ref[:])
 			pos += 20
 		}
 
@@ -156,7 +154,7 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord) (err err
 			return
 		}
 
-		if txn.txn.Set(keyGroups[valueKey], valueKey[:], shard, uint64(offset)); err != nil {
+		if txn.txn.Set(keyGroups[valueKey], valueKey, shard, uint64(offset)); err != nil {
 			return
 		}
 	}
@@ -170,13 +168,13 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord) (err err
 	return
 }
 
-func (txn *refTableTransaction) RetrieveReferences(keyGroup string, valueKey []byte) (refs [][]byte, err error) {
+func (txn *refTableTransaction) RetrieveReferences(keyGroup string, valueKey [20]byte) (refs [][20]byte, err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	return txn.doRetrieveReferences(keyGroup, valueKey)
 }
 
-func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey []byte) (refs [][]byte, err error) {
+func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [20]byte) (refs [][20]byte, err error) {
 	if txn.table.cancelFn == nil {
 		err = ErrNotStarted
 		return
@@ -237,9 +235,10 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 		return
 	}
 
-	refs = make([][]byte, 0, items)
+	refs = make([][20]byte, 0, items)
 	for i := 0; i < recordSize; i += 20 {
-		ref := data[i : i+20]
+		ref := [20]byte{}
+		copy(ref[:], data[i:i+20])
 		refs = append(refs, ref)
 	}
 

@@ -195,7 +195,7 @@ func (tree *avlTree) readAvlNode(offset uint64) (an *avlNode, err error) {
 		offset:          offset,
 		originalRawNode: raw,
 		balance:         int(node.Balance),
-		key:             node.Key[:],
+		key:             node.Key,
 		shard:           node.Shard,
 		position:        node.Position,
 		leftOffset:      node.Left,
@@ -216,6 +216,7 @@ func (an *avlNode) write() (err error) {
 	node := diskAvlNode{
 		Rt:        rtAvlNode,
 		Balance:   int8(an.balance),
+		Key:       an.key,
 		Shard:     an.shard,
 		Position:  an.position,
 		Left:      an.leftOffset,
@@ -225,7 +226,6 @@ func (an *avlNode) write() (err error) {
 		Prev:      an.prevOffset,
 		Next:      an.nextOffset,
 	}
-	copy(node.Key[:], an.key)
 
 	var record bytes.Buffer
 	if err = binary.Write(&record, binary.BigEndian, &node); err != nil {

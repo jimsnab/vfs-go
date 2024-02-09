@@ -20,10 +20,10 @@ func (tree *avlTree) loadFreeNode(offset uint64) (node *freeNode, err error) {
 	return
 }
 
-func (tree *avlTree) alloc(key []byte, shard, position uint64) (node *avlNode, err error) {
+func (tree *avlTree) alloc(key [20]byte, shard, position uint64) (node *avlNode, err error) {
 	an := avlNode{
 		tree: tree,
-		key:  make([]byte, len(key)),
+		key:  key,
 	}
 
 	//
@@ -58,7 +58,6 @@ func (tree *avlTree) alloc(key []byte, shard, position uint64) (node *avlNode, e
 	tree.nodeCache[offset] = &an
 	an.nodeDirty()
 	an.offset = offset
-	copy(an.key, key)
 	an.shard = shard
 	an.position = position
 	an.timestamp = time.Now().UTC().UnixNano()

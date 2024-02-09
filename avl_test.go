@@ -50,11 +50,13 @@ func testInitialize(t *testing.T, makeAvlTree bool) (ts *testState) {
 	return
 }
 
-func testKey(n float64) []byte {
+func testKey(n float64) [20]byte {
 	key := make([]byte, 8)
 	u := math.Float64bits(n)
 	binary.BigEndian.PutUint64(key, u)
-	return key
+	r := [20]byte{}
+	copy(r[:], key)
+	return r
 }
 
 func testGetRoot(tree *avlTree) float64 {
@@ -62,14 +64,16 @@ func testGetRoot(tree *avlTree) float64 {
 	if err != nil {
 		return math.MaxFloat64
 	}
-	u := binary.BigEndian.Uint64(root.Key()[:8])
+	u := binary.BigEndian.Uint64(root.key[:8])
 	return math.Float64frombits(u)
 }
 
-func testKeyInt(n int) []byte {
+func testKeyInt(n int) [20]byte {
 	key := make([]byte, 8)
 	binary.BigEndian.PutUint64(key, uint64(n))
-	return key
+	r := [20]byte{}
+	copy(r[:], key)
+	return r
 }
 
 func (tree *avlTree) testIsValid(t *testing.T) bool {

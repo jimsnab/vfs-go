@@ -25,10 +25,10 @@ type (
 		StoreContent(records []StoreRecord, onComplete CommitCompleted) (err error)
 
 		// Retrieve a specific record
-		RetrieveContent(keyGroup string, key []byte) (content []byte, err error)
+		RetrieveContent(keyGroup string, key [20]byte) (content []byte, err error)
 
 		// Retrieve the referenced keys from a value key of type 'name'
-		RetrieveReferences(name, keyGroup string, valueKey []byte) (refKeys [][]byte, err error)
+		RetrieveReferences(name, keyGroup string, valueKey [20]byte) (refKeys [][20]byte, err error)
 
 		// Discard all records that fall out of the retention period specified in the config.
 		// The caller can optionally provide a callback that is invoked after the disk
@@ -54,14 +54,14 @@ type (
 
 	StoreRecord struct {
 		KeyGroup string
-		Key      []byte
+		Key      [20]byte
 		Content  []byte
 		RefKeys  map[string]StoreReference
 	}
 
 	StoreReference struct {
 		KeyGroup string
-		ValueKey []byte
+		ValueKey [20]byte
 	}
 
 	StoreStats struct {
@@ -74,7 +74,7 @@ type (
 		ShardsRemoved uint64
 	}
 
-	StoreIterator func(key []byte, timestamp time.Time) (err error)
+	StoreIterator func(key [20]byte, timestamp time.Time) (err error)
 
 	store struct {
 		mu              sync.Mutex
@@ -398,7 +398,7 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 	return
 }
 
-func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, err error) {
+func (st *store) RetrieveContent(keyGroup string, key [20]byte) (content []byte, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -464,7 +464,7 @@ func (st *store) RetrieveContent(keyGroup string, key []byte) (content []byte, e
 	return
 }
 
-func (st *store) RetrieveReferences(name, keyGroup string, valueKey []byte) (refKeys [][]byte, err error) {
+func (st *store) RetrieveReferences(name, keyGroup string, valueKey [20]byte) (refKeys [][20]byte, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 

@@ -45,11 +45,11 @@ func TestIndexWrites(t *testing.T) {
 	}
 	defer index.Close()
 
-	ids := make([][]byte, 0, 10000)
+	ids := make([][20]byte, 0, 10000)
 
 	for i := 0; i < 10000; i++ {
-		buf := make([]byte, 20)
-		_, err := rand.Read(buf)
+		buf := [20]byte{}
+		_, err := rand.Read(buf[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,11 +115,11 @@ func TestIndexWrites2(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ids := make([][]byte, 0, 10000)
+	ids := make([][20]byte, 0, 10000)
 
 	for i := 0; i < 10000; i++ {
-		buf := make([]byte, 20)
-		_, err := rand.Read(buf)
+		buf := [20]byte{}
+		_, err := rand.Read(buf[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -190,8 +190,8 @@ func BenchmarkIndex(b *testing.B) {
 	}
 
 	for i := 0; i < 20000; i++ {
-		buf := make([]byte, 20)
-		_, err := rand.Read(buf)
+		buf := [20]byte{}
+		_, err := rand.Read(buf[:])
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -254,8 +254,8 @@ func BenchmarkStore(b *testing.B) {
 		}
 		records := make([]StoreRecord, 0, batchSize)
 		for i := 0; i < batchSize; i++ {
-			key := make([]byte, 20)
-			_, err := rand.Read(key)
+			key := [20]byte{}
+			_, err := rand.Read(key[:])
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -265,13 +265,13 @@ func BenchmarkStore(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			ref1 := make([]byte, 20)
-			if _, err = rand.Read(ref1); err != nil {
+			ref1 := [20]byte{}
+			if _, err = rand.Read(ref1[:]); err != nil {
 				b.Fatal(err)
 			}
 
-			ref2 := make([]byte, 20)
-			if _, err = rand.Read(ref2); err != nil {
+			ref2 := [20]byte{}
+			if _, err = rand.Read(ref2[:]); err != nil {
 				b.Fatal(err)
 			}
 
@@ -316,7 +316,7 @@ func TestIndexDiscardSome(t *testing.T) {
 
 	count := 1500
 
-	ids := make([][]byte, 0, count)
+	ids := make([][20]byte, 0, count)
 	var start time.Time
 
 	for i := 0; i < count; i++ {
@@ -324,8 +324,8 @@ func TestIndexDiscardSome(t *testing.T) {
 			start = time.Now().UTC()
 		}
 
-		buf := make([]byte, 20)
-		_, err := rand.Read(buf)
+		buf := [20]byte{}
+		_, err := rand.Read(buf[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -430,11 +430,11 @@ func TestIndexDiscardShortLru(t *testing.T) {
 
 	count := 15000
 
-	ids := make([][]byte, 0, count)
+	ids := make([][20]byte, 0, count)
 
 	for i := 0; i < count; i++ {
-		buf := make([]byte, 20)
-		_, err := rand.Read(buf)
+		buf := [20]byte{}
+		_, err := rand.Read(buf[:])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -522,7 +522,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 
 	count := 5000
 
-	ids := make([][]byte, 0, count)
+	ids := make([][20]byte, 0, count)
 
 	for i := 0; i < count; i++ {
 		txn, err := index1.BeginTransaction(nil)
@@ -531,8 +531,8 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 		}
 
 		for j := 0; j < 128; j++ {
-			buf := make([]byte, 20)
-			if _, err = rand.Read(buf); err != nil {
+			buf := [20]byte{}
+			if _, err = rand.Read(buf[:]); err != nil {
 				t.Fatal(err)
 			}
 			ids = append(ids, buf)
@@ -618,8 +618,8 @@ func TestRecover(t *testing.T) {
 			defer wg.Done()
 
 			for {
-				buf := make([]byte, 20)
-				_, setError = rand.Read(buf)
+				buf := [20]byte{}
+				_, setError = rand.Read(buf[:])
 				if setError != nil {
 					return
 				}
@@ -741,8 +741,8 @@ func TestRecoverWithPurge(t *testing.T) {
 			defer wg.Done()
 
 			for {
-				buf := make([]byte, 20)
-				_, setError = rand.Read(buf)
+				buf := [20]byte{}
+				_, setError = rand.Read(buf[:])
 				if setError != nil {
 					return
 				}

@@ -41,9 +41,9 @@ type (
 	}
 
 	refRecord struct {
-		KeyGroup string // the key group for ValueKey
-		ValueKey []byte // the indexed key, up to 20 bytes of data extracted from the history doc
-		StoreKey []byte // the history doc id
+		KeyGroup string   // the key group for ValueKey
+		ValueKey [20]byte // the indexed key, up to 20 bytes of data extracted from the history doc
+		StoreKey [20]byte // the history doc id
 	}
 )
 
@@ -293,7 +293,7 @@ func (table *refTable) AddReferences(refRecords []refRecord) (err error) {
 	return
 }
 
-func (table *refTable) RetrieveReferences(keyGroup string, valueKey []byte) (refs [][]byte, err error) {
+func (table *refTable) RetrieveReferences(keyGroup string, valueKey [20]byte) (refs [][20]byte, err error) {
 	table.mu.Lock()
 	defer table.mu.Unlock()
 

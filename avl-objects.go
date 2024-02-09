@@ -50,7 +50,7 @@ type (
 		originalRawNode []byte
 		lru             *lruStackElement[*avlNode]
 		balance         int
-		key             []byte
+		key             [20]byte
 		shard           uint64
 		position        uint64
 		leftOffset      uint64
@@ -234,10 +234,6 @@ func (an *avlNode) AddBalance(delta int) {
 	an.balance += delta
 }
 
-func (an *avlNode) Key() []byte {
-	return an.key
-}
-
 func (an *avlNode) Shard() uint64 {
 	return an.shard
 }
@@ -254,7 +250,7 @@ func (an *avlNode) SetValues(shard, position uint64) {
 
 func (an *avlNode) CopyKeyAndValues(bn *avlNode) {
 	an.nodeDirty()
-	copy(an.key, bn.Key())
+	copy(an.key[:], bn.key[:])
 	an.shard = bn.Shard()
 	an.position = bn.Position()
 }
@@ -439,7 +435,7 @@ func (an *avlNode) dump(prefix string) {
 func (an *avlNode) String() string {
 	return fmt.Sprintf(
 		"key:%s shard:%d position:%d ts:%d parent:%d left:%d right:%d next:%d prev:%d",
-		hex.EncodeToString(an.key),
+		hex.EncodeToString(an.key[:]),
 		an.shard,
 		an.position,
 		an.timestamp,
@@ -470,4 +466,13 @@ func (fn *freeNode) SetNext(next *freeNode) {
 	fn.dirty = true
 	fn.next = next
 	fn.nextOffset = next.Offset()
+}
+
+func keysEqual(k1, k2 [20]byte) bool {
+	for i := 0; i < 20; i++ {
+		if k1[i] != k2[i] {
+			return false
+		}
+	}
+	return true
 }

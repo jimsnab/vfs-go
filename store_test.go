@@ -36,8 +36,8 @@ func TestStoreAndGetOne(t *testing.T) {
 	}
 	defer st.Close()
 
-	key := make([]byte, 20)
-	rand.Read(key)
+	key := [20]byte{}
+	rand.Read(key[:])
 	datalen := mrand.Intn(16384) + 1
 	data := make([]byte, datalen)
 	rand.Read(data)
@@ -84,8 +84,8 @@ func TestStoreAndGetOneReopen(t *testing.T) {
 	}
 	defer st.Close()
 
-	key := make([]byte, 20)
-	rand.Read(key)
+	key := [20]byte{}
+	rand.Read(key[:])
 	datalen := mrand.Intn(16384) + 1
 	data := make([]byte, datalen)
 	rand.Read(data)
@@ -143,13 +143,13 @@ func TestStoreAndGetOneReloaded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	key := make([]byte, 20)
-	rand.Read(key)
+	key := [20]byte{}
+	rand.Read(key[:])
 	datalen := mrand.Intn(16384) + 1
 	data := make([]byte, datalen)
 	rand.Read(data)
-	valueKey := make([]byte, 20)
-	rand.Read(valueKey)
+	valueKey := [20]byte{}
+	rand.Read(valueKey[:])
 
 	records := []StoreRecord{{kTestKeyGroup, key, data, map[string]StoreReference{"x": {keyGroupFromKey(valueKey), valueKey}}}}
 
@@ -192,7 +192,7 @@ func TestStoreAndGetOneReloaded(t *testing.T) {
 		t.Fatal("didn't get reference")
 	}
 
-	if !bytes.Equal(refs[0], key) {
+	if !keysEqual(refs[0], key) {
 		t.Fatal("reference is not to the key")
 	}
 
@@ -218,13 +218,13 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	key1 := make([]byte, 20)
-	rand.Read(key1)
+	key1 := [20]byte{}
+	rand.Read(key1[:])
 	datalen := mrand.Intn(16384) + 1
 	data1 := make([]byte, datalen)
 	rand.Read(data1)
-	valueKey1 := make([]byte, 20)
-	rand.Read(valueKey1)
+	valueKey1 := [20]byte{}
+	rand.Read(valueKey1[:])
 
 	records := []StoreRecord{{kTestKeyGroup, key1, data1, map[string]StoreReference{"x": {kTestKeyGroup, valueKey1}}}}
 
@@ -239,13 +239,13 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	key2 := make([]byte, 20)
-	rand.Read(key2)
+	key2 := [20]byte{}
+	rand.Read(key2[:])
 	datalen = mrand.Intn(16384) + 1
 	data2 := make([]byte, datalen)
 	rand.Read(data2)
-	valueKey2 := make([]byte, 20)
-	rand.Read(valueKey2)
+	valueKey2 := [20]byte{}
+	rand.Read(valueKey2[:])
 
 	records = []StoreRecord{{kTestKeyGroup, key2, data2, map[string]StoreReference{"x": {kTestKeyGroup, valueKey2}}}}
 
@@ -281,7 +281,7 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 		t.Fatal("didn't get reference")
 	}
 
-	if !bytes.Equal(refs[0], key1) {
+	if !keysEqual(refs[0], key1) {
 		t.Fatal("reference is not to the key 1")
 	}
 
@@ -293,7 +293,7 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 		t.Fatal("didn't get reference")
 	}
 
-	if !bytes.Equal(refs[0], key2) {
+	if !keysEqual(refs[0], key2) {
 		t.Fatal("reference is not to the key 2")
 	}
 
@@ -360,13 +360,13 @@ func TestStoreAndGetOneRealDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	key := make([]byte, 20)
-	rand.Read(key)
+	key := [20]byte{}
+	rand.Read(key[:])
 	datalen := mrand.Intn(16384) + 1
 	data := make([]byte, datalen)
 	rand.Read(data)
-	valueKey := make([]byte, 20)
-	rand.Read(valueKey)
+	valueKey := [20]byte{}
+	rand.Read(valueKey[:])
 
 	records := []StoreRecord{{kTestKeyGroup, key, data, map[string]StoreReference{"x": {keyGroupFromKey(valueKey), valueKey}}}}
 
@@ -409,7 +409,7 @@ func TestStoreAndGetOneRealDisk(t *testing.T) {
 		t.Fatal("didn't get reference")
 	}
 
-	if !bytes.Equal(refs[0], key) {
+	if !keysEqual(refs[0], key) {
 		t.Fatal("reference is not to the key")
 	}
 
@@ -440,8 +440,8 @@ func TestStoreAndGetOneSet(t *testing.T) {
 	records := make([]StoreRecord, 0, setSize)
 
 	for i := 0; i < setSize; i++ {
-		key := make([]byte, 20)
-		rand.Read(key)
+		key := [20]byte{}
+		rand.Read(key[:])
 		datalen := mrand.Intn(16384) + 1
 		data := make([]byte, datalen)
 		rand.Read(data)
@@ -489,8 +489,8 @@ func TestStoreAndGet1000(t *testing.T) {
 	defer st.Close()
 
 	for i := 0; i < 1000; i++ {
-		key := make([]byte, 20)
-		rand.Read(key)
+		key := [20]byte{}
+		rand.Read(key[:])
 		datalen := mrand.Intn(16384) + 1
 		data := make([]byte, datalen)
 		rand.Read(data)
@@ -590,12 +590,14 @@ func TestStoreAndGetMany(t *testing.T) {
 				if recordNumber > 0 {
 					idx := mrand.Intn(recordNumber)
 					keyStr := allKeys[idx]
-					key, err := hex.DecodeString(keyStr)
+					keySlice, err := hex.DecodeString(keyStr)
 					if err != nil {
 						mu.Unlock()
 						fatal.Store(&err)
 						return
 					}
+					key := [20]byte{}
+					copy(key[:], keySlice)
 
 					data := allData[idx]
 					mu.Unlock()
@@ -632,15 +634,15 @@ func TestStoreAndGetMany(t *testing.T) {
 
 				setSize := mrand.Intn(8) + 8
 				for i := 0; i < setSize; i++ {
-					key := make([]byte, 20)
-					rand.Read(key)
+					key := [20]byte{}
+					rand.Read(key[:])
 					datalen := mrand.Intn(256) + 1
 					data := make([]byte, datalen)
 					rand.Read(data)
 
 					records = append(records, StoreRecord{kTestKeyGroup, key, data, nil})
 
-					keyStr := hex.EncodeToString(key)
+					keyStr := hex.EncodeToString(key[:])
 					allKeys[recordNumber] = keyStr
 					allData[recordNumber] = data
 					recordNumber++
@@ -692,7 +694,7 @@ func TestStoreAndGetMany(t *testing.T) {
 	fmt.Printf("purges: %d, files removed: %d, keys removed: %d\n", purges, s.shardsRemoved, s.keysRemoved)
 }
 
-func keyGroupFromKey(key []byte) string {
+func keyGroupFromKey(key [20]byte) string {
 	return fmt.Sprintf("%X", key[0]>>4)
 }
 
@@ -722,8 +724,8 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 
 	allKeys := map[int]string{}
 	allData := map[[20]byte][]byte{}
-	allRefKeysA := [][]byte{}
-	allRefKeysB := [][]byte{}
+	allRefKeysA := [][20]byte{}
+	allRefKeysB := [][20]byte{}
 
 	var fatal atomic.Pointer[error]
 	var mu sync.Mutex
@@ -776,11 +778,12 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 					mu.Unlock()
 				} else {
 					var content []byte
-					var refKeys [][]byte
+					var refKeys [][20]byte
 					var expectedContent []byte
 					var expectedRef bool
-					var key []byte
-					var refKey []byte
+					var pkey *[20]byte
+					var keySlice []byte
+					var refKey [20]byte
 					var refKeyType string
 
 					subop := mrand.Intn(100)
@@ -788,17 +791,20 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 						// get a random document
 						idx := mrand.Intn(recordNumber)
 						keyStr := allKeys[idx]
-						key, err = hex.DecodeString(keyStr)
+						keySlice, err = hex.DecodeString(keyStr)
 						if err != nil {
 							fatal.Store(&err)
 							return
 						}
-						expectedContent = allData[[20]byte(key)]
+						key := [20]byte{}
+						copy(key[:], keySlice)
+						pkey = &key
+						expectedContent = allData[key]
 					} else if subop < 54 {
 						// look up a random missing ref key
 						refKeyType = "A"
-						refKey = make([]byte, 20)
-						rand.Read(refKey)
+						refKey = [20]byte{}
+						rand.Read(refKey[:])
 					} else if subop < 74 && len(allRefKeysA) > 0 {
 						// get a document from a random ref key A
 						refKeyType = "A"
@@ -811,12 +817,13 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 						expectedRef = true
 					} else {
 						// look up a random non existent key
-						key = make([]byte, 20)
-						rand.Read(key)
+						key := [20]byte{}
+						rand.Read(key[:])
+						pkey = &key
 					}
 
 					err = func() (failure error) {
-						if refKey != nil {
+						if refKeyType != "" {
 							if refKeys, failure = st.RetrieveReferences(refKeyType, keyGroupFromKey(refKey), refKey); failure != nil {
 								return
 							}
@@ -827,13 +834,14 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 
 							if expectedRef {
 								if len(refKeys) == 0 {
-									_, removed := removedRefKeys[[20]byte(refKey)]
+									_, removed := removedRefKeys[refKey]
 									if !removed {
 										return errors.New("expected a reference key")
 									}
 								} else {
-									key = refKeys[mrand.Intn(len(refKeys))]
-									expectedContent = allData[[20]byte(key)]
+									key := refKeys[mrand.Intn(len(refKeys))]
+									pkey = &key
+									expectedContent = allData[key]
 								}
 							}
 						}
@@ -847,8 +855,8 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 						return
 					}
 
-					if key != nil {
-						content, err = st.RetrieveContent(keyGroupFromKey(key), key)
+					if pkey != nil {
+						content, err = st.RetrieveContent(keyGroupFromKey(*pkey), *pkey)
 						if err != nil {
 							fatal.Store(&err)
 							return
@@ -857,8 +865,11 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 
 					if !bytes.Equal(expectedContent, content) {
 						// old content is removed
-						_, removed := removedKeys[[20]byte(key)]
-						if len(content) > 0 || (key != nil && !removed) {
+						var removed bool
+						if pkey != nil {
+							_, removed = removedKeys[*pkey]
+						}
+						if len(content) > 0 || (pkey != nil && !removed) {
 							err := errors.New("content not equal")
 							fatal.Store(&err)
 							return
@@ -881,8 +892,8 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 				setSize := mrand.Intn(8) + 8
 				for i := 0; i < setSize; i++ {
 					// make a random document
-					key := make([]byte, 20)
-					rand.Read(key)
+					key := [20]byte{}
+					rand.Read(key[:])
 					datalen := mrand.Intn(256) + 1
 					data := make([]byte, datalen)
 					rand.Read(data)
@@ -891,8 +902,8 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 					refKeys := map[string]StoreReference{}
 					if mrand.Intn(10) > 3 {
 						if len(allRefKeysA) == 0 || mrand.Intn(10) > 3 {
-							ref1 := make([]byte, 20)
-							rand.Read(ref1)
+							ref1 := [20]byte{}
+							rand.Read(ref1[:])
 							allRefKeysA = append(allRefKeysA, ref1)
 							refKeys["A"] = StoreReference{keyGroupFromKey(ref1), ref1}
 						} else {
@@ -902,8 +913,8 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 					}
 					if mrand.Intn(10) > 3 {
 						if len(allRefKeysB) == 0 || mrand.Intn(10) > 3 {
-							ref2 := make([]byte, 20)
-							rand.Read(ref2)
+							ref2 := [20]byte{}
+							rand.Read(ref2[:])
 							allRefKeysB = append(allRefKeysB, ref2)
 							refKeys["B"] = StoreReference{keyGroupFromKey(ref2), ref2}
 						} else {
@@ -914,9 +925,9 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 
 					records = append(records, StoreRecord{keyGroupFromKey(key), key, data, refKeys})
 
-					keyStr := hex.EncodeToString(key)
+					keyStr := hex.EncodeToString(key[:])
 					allKeys[recordNumber] = keyStr
-					allData[[20]byte(key)] = data
+					allData[key] = data
 					recordNumber++
 				}
 				mu.Unlock()
@@ -995,7 +1006,7 @@ func TestStorePurge(t *testing.T) {
 	defer st.Close()
 
 	var mu sync.Mutex
-	readShard := map[uint64][]byte{}
+	readShard := map[uint64][20]byte{}
 	lastShard := uint64(0)
 	add := true
 
@@ -1009,8 +1020,8 @@ func TestStorePurge(t *testing.T) {
 				return
 			}
 
-			key := make([]byte, 20)
-			rand.Read(key)
+			key := [20]byte{}
+			rand.Read(key[:])
 			data := make([]byte, 200)
 			rand.Read(data)
 

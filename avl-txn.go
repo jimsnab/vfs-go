@@ -19,7 +19,7 @@ type (
 	}
 )
 
-func (txn *avlTransaction) Set(keyGroup string, key []byte, shard, position uint64) (err error) {
+func (txn *avlTransaction) Set(keyGroup string, key [20]byte, shard, position uint64) (err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 
@@ -33,7 +33,7 @@ func (txn *avlTransaction) Set(keyGroup string, key []byte, shard, position uint
 	return
 }
 
-func (txn *avlTransaction) Get(keyGroup string, key []byte) (found bool, shard, position uint64, err error) {
+func (txn *avlTransaction) Get(keyGroup string, key [20]byte) (found bool, shard, position uint64, err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 
