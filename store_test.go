@@ -335,6 +335,87 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 	}
 }
 
+func TestStoreAndGetOneRealDisk(t *testing.T) {
+	testInitialize(t, false)
+	AppFs = afero.NewOsFs()
+
+	testDir := "/tmp/vfs-test"
+	AppFs.RemoveAll(testDir)
+	AppFs.MkdirAll(testDir, 0744)
+	defer AppFs.RemoveAll(testDir)
+
+	cfg := VfsConfig{
+		IndexDir:           testDir,
+		DataDir:            testDir,
+		BaseName:           "the.test",
+		Sync:               true,
+		ShardDurationDays:  0.03,
+		ShardRetentionDays: 0.06,
+		RecoveryEnabled:    true,
+		ReferenceTables:    []string{"x"},
+	}
+
+	st1, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key := make([]byte, 20)
+	rand.Read(key)
+	datalen := mrand.Intn(16384) + 1
+	data := make([]byte, datalen)
+	rand.Read(data)
+	valueKey := make([]byte, 20)
+	rand.Read(valueKey)
+
+	records := []StoreRecord{{kTestKeyGroup, key, data, map[string]StoreReference{"x": {keyGroupFromKey(valueKey), valueKey}}}}
+
+	if err = st1.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	st1.Close()
+
+	st2, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := st2.RetrieveContent(kTestKeyGroup, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if content == nil {
+		t.Fatal("content not found")
+	}
+
+	if !bytes.Equal(data, content) {
+		t.Fatal("content not equal")
+	}
+
+	st2.Close()
+
+	st3, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	refs, err := st3.RetrieveReferences("x", keyGroupFromKey(valueKey), valueKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 {
+		t.Fatal("didn't get reference")
+	}
+
+	if !bytes.Equal(refs[0], key) {
+		t.Fatal("reference is not to the key")
+	}
+
+	st3.Close()
+}
+
 func TestStoreAndGetOneSet(t *testing.T) {
 	ts := testInitialize(t, false)
 
