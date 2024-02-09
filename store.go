@@ -479,7 +479,7 @@ func (st *store) PurgeOld(onComplete CommitCompleted) (cutoff time.Time, err err
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	retentionPeriod := time.Duration(float64(time.Hour * 24) * st.cfg.ShardRetentionDays)
+	retentionPeriod := time.Duration(float64(time.Hour*24) * st.cfg.ShardRetentionDays)
 	cutoff = time.Now().UTC().Add(-retentionPeriod)
 
 	if onComplete == nil {
@@ -575,7 +575,7 @@ func (st *store) IterateByKeys(iter StoreIterator) (err error) {
 	}
 
 	return st.ai.IterateByKeys(func(node *avlNode) error {
-		return iter(node.key, time.Unix(node.timestamp / 1000000000, node.timestamp % 1000000000))
+		return iter(node.key, time.Unix(node.timestamp/1000000000, node.timestamp%1000000000))
 	})
 }
 
@@ -589,7 +589,7 @@ func (st *store) IterateByTimestamp(iter StoreIterator) (err error) {
 	}
 
 	return st.ai.IterateByTimestamp(func(node *avlNode) error {
-		return iter(node.key, time.Unix(node.timestamp / 1000000000, node.timestamp % 1000000000))
+		return iter(node.key, time.Unix(node.timestamp/1000000000, node.timestamp%1000000000))
 	})
 }
 
