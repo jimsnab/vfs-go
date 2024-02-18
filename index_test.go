@@ -36,6 +36,358 @@ func benchmarkInitialize(b *testing.B) (ts *testState) {
 	return
 }
 
+func TestIndexUpdateTimestamp(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+
+	buf := [20]byte{}
+	_, err = rand.Read(buf[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txn, err := index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts1 time.Time
+	ts1, err = txn.Set(kTestKeyGroup, buf, ts.shard, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txn, err = index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts2 time.Time
+	ts2, err = txn.Set(kTestKeyGroup, buf, ts.shard, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ts1.Equal(ts2) {
+		t.Fatal("second set should replace first")
+	}
+
+	txn, err = index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts3 time.Time
+	_, _, _, ts3, err = txn.Get(kTestKeyGroup, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !ts3.Equal(ts2) {
+		t.Fatal("get should return latest timestamp")
+	}
+
+	err = index.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIndexMakeNewestTimestamp1(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+
+	buf1 := [20]byte{}
+	_, err = rand.Read(buf1[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf2 := [20]byte{}
+	_, err = rand.Read(buf2[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txn, err := index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts1 time.Time
+	ts1, err = txn.Set(kTestKeyGroup, buf1, ts.shard, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = txn.Set(kTestKeyGroup, buf2, ts.shard, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txn, err = index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts2 time.Time
+	ts2, err = txn.Set(kTestKeyGroup, buf1, ts.shard, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ts1.Equal(ts2) {
+		t.Fatal("second set should replace first")
+	}
+
+	txn, err = index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts3 time.Time
+	_, _, _, ts3, err = txn.Get(kTestKeyGroup, buf1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !ts3.Equal(ts2) {
+		t.Fatal("get should return latest timestamp")
+	}
+
+	err = index.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIndexMakeNewestTimestamp2(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+
+	buf1 := [20]byte{}
+	_, err = rand.Read(buf1[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf2 := [20]byte{}
+	_, err = rand.Read(buf2[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txn, err := index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = txn.Set(kTestKeyGroup, buf1, ts.shard, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts1 time.Time
+	ts1, err = txn.Set(kTestKeyGroup, buf2, ts.shard, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txn, err = index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts2 time.Time
+	ts2, err = txn.Set(kTestKeyGroup, buf2, ts.shard, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ts1.Equal(ts2) {
+		t.Fatal("second set should replace first")
+	}
+
+	txn, err = index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts3 time.Time
+	_, _, _, ts3, err = txn.Get(kTestKeyGroup, buf2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !ts3.Equal(ts2) {
+		t.Fatal("get should return latest timestamp")
+	}
+
+	err = index.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIndexMakeNewestTimestamp3(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	index, err := newIndex(&VfsConfig{IndexDir: ts.testDir, BaseName: "index"}, kMainIndexExt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer index.Close()
+
+	buf1 := [20]byte{}
+	_, err = rand.Read(buf1[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf2 := [20]byte{}
+	_, err = rand.Read(buf2[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf3 := [20]byte{}
+	_, err = rand.Read(buf3[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txn, err := index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = txn.Set(kTestKeyGroup, buf1, ts.shard, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts1 time.Time
+	ts1, err = txn.Set(kTestKeyGroup, buf2, ts.shard, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = txn.Set(kTestKeyGroup, buf3, ts.shard, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	txn, err = index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts2 time.Time
+	ts2, err = txn.Set(kTestKeyGroup, buf2, ts.shard, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if ts1.Equal(ts2) {
+		t.Fatal("second set should replace first")
+	}
+
+	txn, err = index.BeginTransaction(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ts3 time.Time
+	_, _, _, ts3, err = txn.Get(kTestKeyGroup, buf2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = txn.EndTransaction()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !ts3.Equal(ts2) {
+		t.Fatal("get should return latest timestamp")
+	}
+
+	err = index.Check()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIndexWrites(t *testing.T) {
 	ts := testInitialize(t, false)
 

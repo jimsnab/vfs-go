@@ -168,3 +168,46 @@ func (tree *avlTree) loadNode(offset uint64) (node *avlNode, err error) {
 
 	return
 }
+
+// Repositions the allocation to the end of the time history.
+func (tree *avlTree) TouchAlloc(node *avlNode) (err error) {
+	node.nodeDirty()
+
+	// if not already the end
+	if node.nextOffset != 0 {
+		// node may be the oldest, or may be in the middle
+		if node.prevOffset == 0 {
+			tree.oldestOffset = node.nextOffset
+		} else {
+			var prev *avlNode
+			if prev, err = tree.loadNode(node.prevOffset); err != nil {
+				return
+			}
+			prev.SetNextOffset(node.NextOffset())
+		}
+
+		// never the last in the list
+		var next *avlNode
+		if next, err = tree.loadNode(node.nextOffset); err != nil {
+			return
+		}
+		next.SetPrevOffset(node.prevOffset)
+
+		// move the node to the end; tree.newestOffset is never 0
+		node.prevOffset = tree.newestOffset
+		node.nextOffset = 0
+
+		// link the end of time history to this node
+		var prev *avlNode
+		if prev, err = tree.loadNode(node.prevOffset); err != nil {
+			return
+		}
+		prev.SetNextOffset(node.offset)
+
+		// this node is now the newest
+		tree.setNewestOffset(node.offset)
+	}
+
+	node.timestamp = time.Now().UTC().UnixNano()
+	return
+}

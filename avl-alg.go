@@ -141,6 +141,9 @@ func (op *avlOperation) insertNode(parentOffset uint64, node *avlNode) (outOffse
 		op.leaf = node
 		balanced = true
 		node.SetValues(op.shard, op.position)
+		if err = node.tree.TouchAlloc(node); err != nil {
+			return
+		}
 	} else {
 		if cmp < 0 {
 			var leftOffset uint64

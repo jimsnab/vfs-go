@@ -356,6 +356,15 @@ func TestAvlDeleteRoot(t *testing.T) {
 	if tree.testRootNode(t) != nil {
 		t.Fatal("not deleted")
 	}
+
+	empty := true
+	tree.IterateByTimestamp(func(node *avlNode) error {
+		empty = false
+		return ErrIteratorAbort
+	})
+	if !empty {
+		t.Fatal("node not removed from time list")
+	}
 }
 
 func TestAvlDeleteLeft(t *testing.T) {
@@ -380,6 +389,15 @@ func TestAvlDeleteLeft(t *testing.T) {
 	}
 
 	tree.testRequireKey(t, 30)
+
+	count := 0
+	tree.IterateByTimestamp(func(node *avlNode) error {
+		count++
+		return nil
+	})
+	if count != 1 {
+		t.Fatal("node not removed from time list")
+	}
 }
 
 func TestAvlDeleteRight(t *testing.T) {
@@ -404,6 +422,15 @@ func TestAvlDeleteRight(t *testing.T) {
 	}
 
 	tree.testRequireKey(t, 30)
+
+	count := 0
+	tree.IterateByTimestamp(func(node *avlNode) error {
+		count++
+		return nil
+	})
+	if count != 1 {
+		t.Fatal("node not removed from time list")
+	}
 }
 
 func TestAvlDeletePromoteLeft(t *testing.T) {
@@ -432,6 +459,15 @@ func TestAvlDeletePromoteLeft(t *testing.T) {
 	}
 
 	tree.testRequireKey(t, 20)
+
+	count := 0
+	tree.IterateByTimestamp(func(node *avlNode) error {
+		count++
+		return nil
+	})
+	if count != 1 {
+		t.Fatal("node not removed from time list")
+	}
 }
 
 func TestAvlDeletePromoteRight(t *testing.T) {
@@ -460,6 +496,15 @@ func TestAvlDeletePromoteRight(t *testing.T) {
 	}
 
 	tree.testRequireKey(t, 40)
+
+	count := 0
+	tree.IterateByTimestamp(func(node *avlNode) error {
+		count++
+		return nil
+	})
+	if count != 1 {
+		t.Fatal("node not removed from time list")
+	}
 }
 
 func TestAvlDeletePromoteLeftFull(t *testing.T) {
@@ -491,6 +536,15 @@ func TestAvlDeletePromoteLeftFull(t *testing.T) {
 	tree.testRequireKey(t, 20)
 	tree.testRequireKey(t, 40)
 	tree.testRequireNoKey(t, 30)
+
+	count := 0
+	tree.IterateByTimestamp(func(node *avlNode) error {
+		count++
+		return nil
+	})
+	if count != 2 {
+		t.Fatal("node not removed from time list")
+	}
 }
 
 func TestAvlDeleteReplace(t *testing.T) {
@@ -528,6 +582,15 @@ func TestAvlDeleteReplace(t *testing.T) {
 	tree.testRequireKey(t, 25)
 	tree.testRequireKey(t, 40)
 	tree.testRequireNoKey(t, 20)
+
+	count := 0
+	tree.IterateByTimestamp(func(node *avlNode) error {
+		count++
+		return nil
+	})
+	if count != 4 {
+		t.Fatal("node not removed from time list")
+	}
 }
 
 func TestAvlDeleteReplace2(t *testing.T) {
@@ -568,6 +631,15 @@ func TestAvlDeleteReplace2(t *testing.T) {
 	tree.testRequireKey(t, 17)
 	tree.testRequireKey(t, 40)
 	tree.testRequireNoKey(t, 20)
+
+	count := 0
+	tree.IterateByTimestamp(func(node *avlNode) error {
+		count++
+		return nil
+	})
+	if count != 7 {
+		t.Fatal("node not removed from time list")
+	}
 }
 
 func TestAvlInsertDelete5(t *testing.T) {
