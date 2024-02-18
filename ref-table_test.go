@@ -735,7 +735,7 @@ func TestRefAndGetMany(t *testing.T) {
 						found := map[[20]byte]struct{}{}
 						for _, ref := range refs {
 							for _, sk := range expectedStoreKeys {
-								if !keysEqual(ref, sk) {
+								if keysEqual(ref, sk) {
 									if _, prior := found[sk]; prior {
 										err = errors.New("store key array should not have dups")
 										fatal.Store(&err)
@@ -746,7 +746,7 @@ func TestRefAndGetMany(t *testing.T) {
 								}
 							}
 						}
-						if len(found) != len(refs) {
+						if len(found) != len(expectedStoreKeys) {
 							err = errors.New("didn't get the expected reference array")
 							fatal.Store(&err)
 							return
@@ -807,7 +807,7 @@ func TestRefAndGetMany(t *testing.T) {
 
 					prior := false
 					for _, sk := range list {
-						if !keysEqual(sk, storeKey) {
+						if keysEqual(sk, storeKey) {
 							// already stored
 							prior = true
 							break
@@ -894,6 +894,7 @@ func TestRefAndGetMany(t *testing.T) {
 				} else {
 					purged[valueKey] = struct{}{}
 					toRemove = append(toRemove, i)
+					delete(allStoreKeys, valueKey)
 				}
 			}
 

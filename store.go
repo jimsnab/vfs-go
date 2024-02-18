@@ -30,6 +30,9 @@ type (
 		// Retrieve the referenced keys from a value key of type 'name'
 		RetrieveReferences(name, keyGroup string, valueKey [20]byte) (refKeys [][20]byte, err error)
 
+		// Gets the index timestamp for the specified key; returns zero time if not found.
+		GetKeyTimestamp(keyGroup string, key [20]byte) (ts time.Time, err error)
+
 		// Discard all records that fall out of the retention period specified in the config.
 		// The caller can optionally provide a callback that is invoked after the disk
 		// is synchronized. If onComplete is nil, the function blocks until the deletion
@@ -413,7 +416,7 @@ func (st *store) RetrieveContent(keyGroup string, key [20]byte) (content []byte,
 		}
 	}()
 
-	found, shard, position, err := txn.Get(keyGroup, key)
+	found, shard, position, _, err := txn.Get(keyGroup, key)
 	if err != nil {
 		return
 	}
@@ -461,6 +464,25 @@ func (st *store) RetrieveContent(keyGroup string, key [20]byte) (content []byte,
 		}
 	}
 
+	return
+}
+
+func (st *store) GetKeyTimestamp(keyGroup string, key [20]byte) (ts time.Time, err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	txn, err := st.ai.BeginTransaction(nil)
+	if err != nil {
+		return
+	}
+	defer func() {
+		terr := st.ai.txn.EndTransaction()
+		if err == nil {
+			err = terr
+		}
+	}()
+
+	_, _, _, ts, err = txn.Get(keyGroup, key)
 	return
 }
 

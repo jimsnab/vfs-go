@@ -2,6 +2,7 @@ package vfs
 
 import (
 	"sync"
+	"time"
 )
 
 type (
@@ -19,7 +20,7 @@ type (
 	}
 )
 
-func (txn *avlTransaction) Set(keyGroup string, key [20]byte, shard, position uint64) (err error) {
+func (txn *avlTransaction) Set(keyGroup string, key [20]byte, shard, position uint64) (ts time.Time, err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 
@@ -29,11 +30,16 @@ func (txn *avlTransaction) Set(keyGroup string, key [20]byte, shard, position ui
 	}
 	txn.touched[keyGroup] = struct{}{}
 
-	_, _, err = tree.Set(key, shard, position)
+	node, _, err := tree.Set(key, shard, position)
+	if err != nil {
+		return
+	}
+
+	ts = time.Unix(node.timestamp/1000000000, node.timestamp%1000000000)
 	return
 }
 
-func (txn *avlTransaction) Get(keyGroup string, key [20]byte) (found bool, shard, position uint64, err error) {
+func (txn *avlTransaction) Get(keyGroup string, key [20]byte) (found bool, shard, position uint64, ts time.Time, err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 
@@ -50,6 +56,7 @@ func (txn *avlTransaction) Get(keyGroup string, key [20]byte) (found bool, shard
 		found = true
 		shard = node.Shard()
 		position = node.Position()
+		ts = time.Unix(node.timestamp/1000000000, node.timestamp%1000000000)
 	}
 
 	return

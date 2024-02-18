@@ -249,9 +249,12 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 
 	records = []StoreRecord{{kTestKeyGroup, key2, data2, map[string]StoreReference{"x": {kTestKeyGroup, valueKey2}}}}
 
+	before := time.Now().UTC()
 	if err = st2.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
 	}
+	after := time.Now().UTC()
+	window := after.Sub(before)
 
 	content, err := st2.RetrieveContent(kTestKeyGroup, key1)
 	if err != nil {
@@ -260,6 +263,16 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 
 	if content == nil {
 		t.Fatal("content not found")
+	}
+
+	timestamp, err := st2.GetKeyTimestamp(kTestKeyGroup, key1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tsDelta := timestamp.Sub(before)
+	if tsDelta.Milliseconds() > window.Milliseconds() {
+		t.Error("timestamp did not fall in store window")
 	}
 
 	if !bytes.Equal(data1, content) {

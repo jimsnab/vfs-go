@@ -46,6 +46,7 @@ func TestIndexWrites(t *testing.T) {
 	defer index.Close()
 
 	ids := make([][20]byte, 0, 10000)
+	timestamps := make([]time.Time, 0, 10000)
 
 	for i := 0; i < 10000; i++ {
 		buf := [20]byte{}
@@ -60,10 +61,12 @@ func TestIndexWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
+		var timestamp time.Time
+		timestamp, err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			t.Fatal(err)
 		}
+		timestamps = append(timestamps, timestamp)
 
 		err = txn.EndTransaction()
 		if err != nil {
@@ -78,7 +81,7 @@ func TestIndexWrites(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
+		found, shard, position, timestamp, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,6 +96,10 @@ func TestIndexWrites(t *testing.T) {
 
 		if shard != ts.shard {
 			t.Fatal("not shard")
+		}
+
+		if !timestamp.Equal(timestamps[i]) {
+			t.Fatal("not timestamp")
 		}
 
 		err = txn.EndTransaction()
@@ -130,7 +137,7 @@ func TestIndexWrites2(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
+		_, err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,7 +162,7 @@ func TestIndexWrites2(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
+		found, shard, position, _, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -201,7 +208,7 @@ func BenchmarkIndex(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
+		_, err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -336,7 +343,7 @@ func TestIndexDiscardSome(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
+		_, err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -376,7 +383,7 @@ func TestIndexDiscardSome(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
+		found, shard, position, _, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -445,7 +452,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
+		_, err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -474,7 +481,7 @@ func TestIndexDiscardShortLru(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
+		found, shard, position, _, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -537,7 +544,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 			}
 			ids = append(ids, buf)
 
-			err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
+			_, err = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(i))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -566,7 +573,7 @@ func TestIndexDiscardShortLruManySets(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		found, shard, position, err := txn.Get(kTestKeyGroup, buf)
+		found, shard, position, _, err := txn.Get(kTestKeyGroup, buf)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -642,7 +649,7 @@ func TestRecover(t *testing.T) {
 					return
 				}
 
-				setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter.Load()))
+				_, setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter.Load()))
 				if setError != nil {
 					return
 				}
@@ -774,7 +781,7 @@ func TestRecoverWithPurge(t *testing.T) {
 					return
 				}
 
-				setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter.Load()))
+				_, setError = txn.Set(kTestKeyGroup, buf, ts.shard, uint64(counter.Load()))
 				if setError != nil {
 					mu.Unlock()
 					return

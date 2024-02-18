@@ -180,7 +180,7 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 		return
 	}
 
-	found, shard, position, err := txn.txn.Get(keyGroup, valueKey)
+	found, shard, position, _, err := txn.txn.Get(keyGroup, valueKey)
 	if err != nil {
 		return
 	}

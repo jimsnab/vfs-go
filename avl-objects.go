@@ -263,7 +263,7 @@ func (an *avlNode) SetTimestamp(ts int64) {
 func (an *avlNode) SwapTimestamp(bn *avlNode) (err error) {
 	ts := an.timestamp
 	an.nodeDirty()
-	an.timestamp = bn.Timestamp()
+	an.timestamp = bn.timestamp
 	bn.SetTimestamp(ts)
 
 	tree := an.tree
@@ -325,10 +325,6 @@ func (an *avlNode) SwapTimestamp(bn *avlNode) (err error) {
 	}
 
 	return
-}
-
-func (an *avlNode) Timestamp() int64 {
-	return an.timestamp
 }
 
 func (tree *avlTree) getRootOffset() uint64 {

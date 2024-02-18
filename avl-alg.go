@@ -656,10 +656,10 @@ func (tree *avlTree) checkTimestampLinks() (valid bool, err error) {
 	var prior *avlNode
 	ts := int64(0)
 	for p != nil {
-		if p.Timestamp() < ts {
+		if p.timestamp < ts {
 			return
 		}
-		ts = p.Timestamp()
+		ts = p.timestamp
 
 		if ts == 0 {
 			err = errors.New("timestamp not set")

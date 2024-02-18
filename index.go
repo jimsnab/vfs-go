@@ -187,7 +187,7 @@ func (ai *avlIndex) doRemoveBefore(cutoff time.Time) (err error) {
 		deletions := 0
 		var order int64
 		terr := tree.IterateByTimestamp(func(node *avlNode) error {
-			createdNs := node.Timestamp()
+			createdNs := node.timestamp
 
 			if createdNs < order {
 				panic("out of order")
