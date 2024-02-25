@@ -1049,7 +1049,7 @@ func testStoreRefTablePurgeWorker(t *testing.T, ts *testState, cfg *VfsConfig) {
 			valueKey := [20]byte{}
 			rand.Read(valueKey[:])
 
-			shard := table.calcShard(time.Now().UTC())
+			shard := table.cfg.calcShard(time.Now().UTC())
 			if shard != lastShard {
 				if add {
 					mu.Lock()

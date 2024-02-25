@@ -30,7 +30,12 @@ func CopyStore(source, target Store, cfg *CopyConfig) (err error) {
 	}
 
 	src := source.(*store)
+	src.docMu.Lock()
+	defer src.docMu.Unlock()
+
 	dest := target.(*store)
+	dest.docMu.Lock()
+	defer dest.docMu.Unlock()
 
 	srcTxn, err := src.ai.BeginTransaction(nil)
 	if err != nil {
@@ -71,14 +76,16 @@ func CopyStore(source, target Store, cfg *CopyConfig) (err error) {
 			}
 
 			record := StoreRecord{
-				KeyGroup: keyGroup,
-				Key:      node.key,
-				Content:  content,
-				RefLists: refLists,
+				shard:     node.shard, // retain the shard
+				timestamp: node.timestamp,
+				KeyGroup:  keyGroup,
+				Key:       node.key,
+				Content:   content,
+				RefLists:  refLists,
 			}
 			records = append(records, record)
 			if len(records) == 10000 {
-				err := dest.StoreContent(records, nil)
+				err := dest.doStoreContent(records, nil)
 				if err != nil {
 					return err
 				}
@@ -107,7 +114,7 @@ func CopyStore(source, target Store, cfg *CopyConfig) (err error) {
 	}
 
 	if len(records) > 0 {
-		err = dest.StoreContent(records, nil)
+		err = dest.doStoreContent(records, nil)
 		if err != nil {
 			return
 		}

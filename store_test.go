@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	mrand "math/rand"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,14 @@ import (
 	"time"
 
 	"github.com/jimsnab/afero"
+)
+
+type (
+	testStoreKey struct {
+		keyGroup  string
+		key       [20]byte
+		timestamp time.Time
+	}
 )
 
 func TestStoreAndGetOne(t *testing.T) {
@@ -42,7 +51,7 @@ func TestStoreAndGetOne(t *testing.T) {
 	data := make([]byte, datalen)
 	rand.Read(data)
 
-	records := []StoreRecord{{kTestKeyGroup, key, data, nil}}
+	records := []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key, Content: data}}
 
 	if err = st.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
@@ -90,7 +99,7 @@ func TestStoreAndGetOneReopen(t *testing.T) {
 	data := make([]byte, datalen)
 	rand.Read(data)
 
-	records := []StoreRecord{{kTestKeyGroup, key, data, nil}}
+	records := []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key, Content: data}}
 
 	if err = st.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
@@ -151,7 +160,7 @@ func TestStoreAndGetOneReloaded(t *testing.T) {
 	valueKey := [20]byte{}
 	rand.Read(valueKey[:])
 
-	records := []StoreRecord{{kTestKeyGroup, key, data, map[string][]StoreReference{"x": {{keyGroupFromKey(valueKey), valueKey}}}}}
+	records := []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key, Content: data, RefLists: map[string][]StoreReference{"x": {{keyGroupFromKey(valueKey), valueKey}}}}}
 
 	if err = st1.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
@@ -226,7 +235,7 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 	valueKey1 := [20]byte{}
 	rand.Read(valueKey1[:])
 
-	records := []StoreRecord{{kTestKeyGroup, key1, data1, map[string][]StoreReference{"x": {{kTestKeyGroup, valueKey1}}}}}
+	records := []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key1, Content: data1, RefLists: map[string][]StoreReference{"x": {{kTestKeyGroup, valueKey1}}}}}
 
 	if err = st1.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
@@ -247,7 +256,7 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 	valueKey2 := [20]byte{}
 	rand.Read(valueKey2[:])
 
-	records = []StoreRecord{{kTestKeyGroup, key2, data2, map[string][]StoreReference{"x": {{kTestKeyGroup, valueKey2}}}}}
+	records = []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key2, Content: data2, RefLists: map[string][]StoreReference{"x": {{kTestKeyGroup, valueKey2}}}}}
 
 	before := time.Now().UTC()
 	if err = st2.StoreContent(records, nil); err != nil {
@@ -381,7 +390,7 @@ func TestStoreAndGetOneRealDisk(t *testing.T) {
 	valueKey := [20]byte{}
 	rand.Read(valueKey[:])
 
-	records := []StoreRecord{{kTestKeyGroup, key, data, map[string][]StoreReference{"x": {{keyGroupFromKey(valueKey), valueKey}}}}}
+	records := []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key, Content: data, RefLists: map[string][]StoreReference{"x": {{keyGroupFromKey(valueKey), valueKey}}}}}
 
 	if err = st1.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
@@ -459,7 +468,7 @@ func TestStoreAndGetOneSet(t *testing.T) {
 		data := make([]byte, datalen)
 		rand.Read(data)
 
-		records = append(records, StoreRecord{kTestKeyGroup, key, data, nil})
+		records = append(records, StoreRecord{KeyGroup: kTestKeyGroup, Key: key, Content: data})
 	}
 
 	if err = st.StoreContent(records, nil); err != nil {
@@ -508,7 +517,7 @@ func TestStoreAndGet1000(t *testing.T) {
 		data := make([]byte, datalen)
 		rand.Read(data)
 
-		records := []StoreRecord{{kTestKeyGroup, key, data, nil}}
+		records := []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key, Content: data}}
 
 		if err = st.StoreContent(records, nil); err != nil {
 			t.Fatal(err)
@@ -653,7 +662,7 @@ func TestStoreAndGetMany(t *testing.T) {
 					data := make([]byte, datalen)
 					rand.Read(data)
 
-					records = append(records, StoreRecord{kTestKeyGroup, key, data, nil})
+					records = append(records, StoreRecord{KeyGroup: kTestKeyGroup, Key: key, Content: data})
 
 					keyStr := hex.EncodeToString(key[:])
 					allKeys[recordNumber] = keyStr
@@ -936,7 +945,7 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 						}
 					}
 
-					records = append(records, StoreRecord{keyGroupFromKey(key), key, data, refLists})
+					records = append(records, StoreRecord{KeyGroup: keyGroupFromKey(key), Key: key, Content: data, RefLists: refLists})
 
 					keyStr := hex.EncodeToString(key[:])
 					allKeys[recordNumber] = keyStr
@@ -1053,7 +1062,7 @@ func TestStorePurge(t *testing.T) {
 			data := make([]byte, 200)
 			rand.Read(data)
 
-			shard := st.calcShard(time.Now().UTC())
+			shard := st.cfg.calcShard(time.Now().UTC())
 			if shard != lastShard {
 				if add {
 					mu.Lock()
@@ -1066,7 +1075,7 @@ func TestStorePurge(t *testing.T) {
 				lastShard = shard
 			}
 
-			records := []StoreRecord{{"a", key, data, nil}}
+			records := []StoreRecord{{KeyGroup: "a", Key: key, Content: data}}
 			err := st.StoreContent(records, nil)
 			if err != nil {
 				panic(err)
@@ -1121,4 +1130,257 @@ func TestStorePurge(t *testing.T) {
 	if stats.ShardsRemoved < 3 {
 		t.Fatal("too few shards removed")
 	}
+}
+
+func TestStoreAndCopyMultiShard(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	srcPath := path.Join(ts.testDir, "source")
+	err := AppFs.MkdirAll(srcPath, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srcCfg := VfsConfig{
+		IndexDir:           srcPath,
+		DataDir:            srcPath,
+		BaseName:           "the.test",
+		ShardDurationDays:  0.000004630,
+		ShardRetentionDays: 1,
+		ReferenceTables:    []string{"mycol"},
+	}
+	fmt.Printf("shard life: %d ms\n", uint64(24*60*60*1000*srcCfg.ShardDurationDays))
+
+	srcSt, err := NewStore(&srcCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srcSt.Close()
+
+	priorKeys := [][20]byte{}
+
+	for {
+		key := [20]byte{}
+		rand.Read(key[:])
+		datalen := mrand.Intn(2048) + 80
+		data := make([]byte, datalen)
+		rand.Read(data)
+
+		valueKey1 := [20]byte{}
+		copy(valueKey1[:], data[:20])
+		valueKey2 := [20]byte{}
+		copy(valueKey2[:], data[20:40])
+
+		if len(priorKeys) < 30 {
+			priorKeys = append(priorKeys, key)
+		} else if mrand.Intn(10) < 2 {
+			key = priorKeys[mrand.Intn(len(priorKeys))]
+		}
+
+		refLists := map[string][]StoreReference{}
+		refLists["mycol"] = []StoreReference{
+			{KeyGroup: testValueKeyGroupFromKey(valueKey1), ValueKey: valueKey1},
+			{KeyGroup: testValueKeyGroupFromKey(valueKey2), ValueKey: valueKey2},
+		}
+
+		records := []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key, Content: data, RefLists: refLists}}
+
+		if err = srcSt.StoreContent(records, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		files, err := afero.ReadDir(AppFs, srcPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dt3s := 0
+		for _, file := range files {
+			if strings.HasPrefix(file.Name(), "the.test.") && strings.HasSuffix(file.Name(), ".dt3") {
+				dt3s++
+			}
+		}
+		if dt3s >= 3 {
+			break
+		}
+	}
+
+	stats := srcSt.Stats()
+	fmt.Printf("keys: %d\nsets: %d\n", stats.Keys, stats.Sets)
+
+	destPath := path.Join(ts.testDir, "dest")
+	err = AppFs.MkdirAll(destPath, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destCfg := VfsConfig{
+		IndexDir:           destPath,
+		DataDir:            destPath,
+		BaseName:           srcCfg.BaseName,
+		ShardDurationDays:  srcCfg.ShardDurationDays,
+		ShardRetentionDays: srcCfg.ShardRetentionDays,
+		ReferenceTables:    srcCfg.ReferenceTables,
+	}
+
+	destSt, err := NewStore(&destCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destSt.Close()
+
+	copyCfg := CopyConfig{
+		Reindex: func(name string, content []byte) (refs []StoreReference, err error) {
+			valueKey1 := [20]byte{}
+			copy(valueKey1[:], content[:20])
+			valueKey2 := [20]byte{}
+			copy(valueKey2[:], content[20:40])
+
+			refs = []StoreReference{
+				{KeyGroup: testValueKeyGroupFromKey(valueKey1), ValueKey: valueKey1},
+				{KeyGroup: testValueKeyGroupFromKey(valueKey2), ValueKey: valueKey2},
+			}
+			return
+		},
+	}
+	err = CopyStore(srcSt, destSt, &copyCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destStats := destSt.Stats()
+	fmt.Printf("dest keys: %d  sets: %d\n", destStats.Keys, destStats.Sets)
+
+	srcFiles, err := afero.ReadDir(AppFs, srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range srcFiles {
+		fmt.Println("source: " + file.Name())
+	}
+	for _, file := range srcFiles {
+		fi, err := AppFs.Stat(path.Join(destPath, file.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Println("dest:   " + fi.Name())
+	}
+
+	sourceData := []testStoreKey{}
+	err = srcSt.IterateByKeys(func(keyGroup string, key [20]byte, timestamp time.Time) (err error) {
+		tsk := testStoreKey{keyGroup: keyGroup, key: key, timestamp: timestamp}
+		sourceData = append(sourceData, tsk)
+		return
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sourceData) != int(destStats.Keys) {
+		t.Fatal("not expected number of keys")
+	}
+
+	i := 0
+	err = destSt.IterateByKeys(func(keyGroup string, key [20]byte, timestamp time.Time) (err error) {
+		tsk := sourceData[i]
+		i++
+
+		if tsk.keyGroup != keyGroup {
+			err = fmt.Errorf("keygroup mismatch: expected %s, got %s", tsk.keyGroup, keyGroup)
+			return
+		}
+		srcKey := hex.EncodeToString(tsk.key[:])
+		destKey := hex.EncodeToString(key[:])
+
+		if srcKey != destKey {
+			err = fmt.Errorf("key mismatch: expected %s, got %s", srcKey, destKey)
+			return
+		}
+		if !tsk.timestamp.Equal(timestamp) {
+			err = fmt.Errorf("timestamp mismatch: expected %s, got %s", tsk.timestamp, timestamp)
+			return
+		}
+
+		content, err := destSt.RetrieveContent(keyGroup, key)
+		if err != nil {
+			return
+		}
+		valueKey1 := [20]byte{}
+		copy(valueKey1[:], content[:20])
+		valueKey2 := [20]byte{}
+		copy(valueKey2[:], content[20:40])
+
+		refKeys, err := destSt.RetrieveReferences("mycol", testValueKeyGroupFromKey(valueKey1), valueKey1)
+		if err != nil {
+			return
+		}
+		if len(refKeys) != 1 {
+			err = fmt.Errorf("value 1 ref not found")
+			return
+		}
+		if !bytes.Equal(refKeys[0][:], key[:]) {
+			err = fmt.Errorf("value 1 ref not equal")
+			return
+		}
+
+		refKeys, err = destSt.RetrieveReferences("mycol", testValueKeyGroupFromKey(valueKey2), valueKey2)
+		if err != nil {
+			return
+		}
+		if len(refKeys) != 1 {
+			err = fmt.Errorf("value 2 ref not found")
+			return
+		}
+		if !bytes.Equal(refKeys[0][:], key[:]) {
+			err = fmt.Errorf("value 2 ref not equal")
+			return
+		}
+
+		return
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sourceData = []testStoreKey{}
+	err = srcSt.IterateByTimestamp(func(keyGroup string, key [20]byte, timestamp time.Time) (err error) {
+		tsk := testStoreKey{keyGroup: keyGroup, key: key, timestamp: timestamp}
+		sourceData = append(sourceData, tsk)
+		return
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sourceData) != int(destStats.Keys) {
+		t.Fatal("not expected number of keys")
+	}
+
+	i = 0
+	err = destSt.IterateByTimestamp(func(keyGroup string, key [20]byte, timestamp time.Time) (err error) {
+		tsk := sourceData[i]
+		i++
+
+		if tsk.keyGroup != keyGroup {
+			err = fmt.Errorf("keygroup mismatch: expected %s, got %s", tsk.keyGroup, keyGroup)
+			return
+		}
+		srcKey := hex.EncodeToString(tsk.key[:])
+		destKey := hex.EncodeToString(key[:])
+
+		if srcKey != destKey {
+			err = fmt.Errorf("key mismatch: expected %s, got %s", srcKey, destKey)
+			return
+		}
+		if !tsk.timestamp.Equal(timestamp) {
+			err = fmt.Errorf("timestamp mismatch: expected %s, got %s", tsk.timestamp, timestamp)
+			return
+		}
+		return
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testValueKeyGroupFromKey(valueKey [20]byte) string {
+	return string('A' + (valueKey[0] % 3))
 }

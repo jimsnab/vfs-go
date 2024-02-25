@@ -1,6 +1,7 @@
 package vfs
 
 import (
+	"errors"
 	"time"
 )
 
@@ -20,10 +21,24 @@ func (tree *avlTree) loadFreeNode(offset uint64) (node *freeNode, err error) {
 	return
 }
 
-func (tree *avlTree) alloc(key [20]byte, shard, position uint64) (node *avlNode, err error) {
+func (tree *avlTree) alloc(key [20]byte, shard, position uint64, timestamp int64) (node *avlNode, err error) {
 	an := avlNode{
 		tree: tree,
 		key:  key,
+	}
+
+	var newestNode *avlNode
+	if newestNode, err = tree.loadNode(tree.newestOffset); err != nil {
+		return
+	}
+	if timestamp != 0 {
+		if newestNode != nil && newestNode.timestamp >= timestamp {
+			// Setting a specific timestamp is only allowed when adding to the end of the
+			// store time list. Otherwise it requires insertion into the time list,
+			// which is inefficient, so it is unsupported.
+			err = errors.New("appending a node with a non-sequential timestamp is prohibited")
+			return
+		}
 	}
 
 	//
@@ -60,7 +75,12 @@ func (tree *avlTree) alloc(key [20]byte, shard, position uint64) (node *avlNode,
 	an.offset = offset
 	an.shard = shard
 	an.position = position
-	an.timestamp = time.Now().UTC().UnixNano()
+
+	if timestamp == 0 {
+		an.timestamp = time.Now().UTC().UnixNano()
+	} else {
+		an.timestamp = timestamp
+	}
 
 	//
 	// Link the new node in time history.
@@ -71,11 +91,7 @@ func (tree *avlTree) alloc(key [20]byte, shard, position uint64) (node *avlNode,
 	if tree.newestOffset == 0 {
 		tree.oldestOffset = offset
 	} else {
-		var prev *avlNode
-		if prev, err = tree.loadNode(tree.newestOffset); err != nil {
-			return
-		}
-		prev.SetNextOffset(offset)
+		newestNode.SetNextOffset(offset)
 	}
 
 	tree.newestOffset = offset

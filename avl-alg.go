@@ -11,12 +11,13 @@ import (
 
 type (
 	avlOperation struct {
-		tree     *avlTree
-		key      [20]byte
-		shard    uint64
-		position uint64
-		leaf     *avlNode
-		added    bool
+		tree      *avlTree
+		key       [20]byte
+		shard     uint64
+		position  uint64
+		timestamp int64
+		leaf      *avlNode
+		added     bool
 	}
 )
 
@@ -53,11 +54,16 @@ func (tree *avlTree) Find(key [20]byte) (node *avlNode, err error) {
 
 // adds a key to the AVL tree, or finds the existing node
 func (tree *avlTree) Set(key [20]byte, shard, position uint64) (node *avlNode, added bool, err error) {
+	return tree.setWithTimestamp(key, shard, position, 0)
+}
+
+func (tree *avlTree) setWithTimestamp(key [20]byte, shard, position uint64, timestamp int64) (node *avlNode, added bool, err error) {
 	op := &avlOperation{
-		tree:     tree,
-		key:      key,
-		shard:    shard,
-		position: position,
+		tree:      tree,
+		key:       key,
+		shard:     shard,
+		position:  position,
+		timestamp: timestamp,
 	}
 
 	root, err := tree.loadNode(tree.getRootOffset())
@@ -125,7 +131,7 @@ func (op *avlOperation) loadAndInsertNode(parentOffset uint64, nodeOffset uint64
 func (op *avlOperation) insertNode(parentOffset uint64, node *avlNode) (outOffset uint64, balanced bool, err error) {
 	if node == nil {
 		var out *avlNode
-		if out, err = op.tree.alloc(op.key, op.shard, op.position); err != nil {
+		if out, err = op.tree.alloc(op.key, op.shard, op.position, op.timestamp); err != nil {
 			return
 		}
 		out.SetParentOffset(parentOffset)
@@ -138,6 +144,15 @@ func (op *avlOperation) insertNode(parentOffset uint64, node *avlNode) (outOffse
 	cmp := bytes.Compare(op.key[:], node.key[:])
 
 	if cmp == 0 {
+		if op.timestamp != 0 {
+			if node.nextOffset != 0 {
+				// If a timestamp is specified, it would require finding the right spot in the
+				// time-ordered list, which is inefficient, so it is unsupported.
+				err = errors.New("updating a node with a non-sequential timestamp is prohibited")
+				return
+			}
+			node.timestamp = op.timestamp
+		}
 		op.leaf = node
 		balanced = true
 		node.SetValues(op.shard, op.position)

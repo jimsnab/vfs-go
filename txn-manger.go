@@ -53,7 +53,7 @@ func (tm *transactionManager) Attach(tds transactionDataStore) {
 // Starts a go routine to perform flush and commit.
 //
 //   - If completionFn is non-nil, Resolve() will return nil err, and the
-//     commit activity will run in a separate go routine. When commit
+//     commit activity will run in a separate goroutine. When commit
 //     completes, completeFn is called with the result.
 //
 // - If completionFn is nil, Resolve() will block and return the result in err.

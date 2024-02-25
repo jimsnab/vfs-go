@@ -138,31 +138,6 @@ func (table *refTable) Close() {
 	table.index = nil
 }
 
-func (table *refTable) calcShard(when time.Time) uint64 {
-	// convert time to an integral
-	divisor := uint64(24 * 60 * 60 * 1000 * table.cfg.ShardDurationDays)
-	if divisor < 1 {
-		divisor = 1
-	}
-	shard := uint64(when.UnixMilli())
-	shard = shard / divisor
-
-	// multiply by 10 to leave some numeric space between shards
-	//
-	// for example, it may be desired to compact old shards, and having space to insert
-	// another allows transactions to be moved one by one, while the rest of the system
-	// continues to operate
-	//
-	// it also leaves space for migration to a new format
-	shard *= 10
-	return shard
-}
-
-func (table *refTable) timeFromShard(shard uint64) time.Time {
-	ms := int64(shard/10) * int64(24*60*60*1000*table.cfg.ShardDurationDays)
-	return time.Unix(int64(ms/1000), (ms%1000)*1000*1000)
-}
-
 // Background task worker
 func (table *refTable) closeIdleShards() {
 	table.mu.Lock()
@@ -209,7 +184,7 @@ func (table *refTable) PurgeOld(cutoff time.Time) (err error) {
 // API task worker (caller holds the lock)
 func (table *refTable) openShard(request uint64, forRead bool) (f afero.File, shard uint64, err error) {
 	if request == 0 {
-		shard = table.calcShard(time.Now().UTC())
+		shard = table.cfg.calcShard(time.Now().UTC())
 	} else {
 		shard = request
 	}
@@ -265,7 +240,7 @@ func (table *refTable) purgeShards(cutoff time.Time) (err error) {
 			continue
 		}
 
-		ts := table.timeFromShard(shard)
+		ts := table.cfg.timeFromShard(shard)
 		if ts.Before(cutoff) {
 			if err = AppFs.Remove(path.Join(table.cfg.DataDir, fileName)); err != nil {
 				return
@@ -287,7 +262,7 @@ func (table *refTable) AddReferences(refRecords []refRecord) (err error) {
 		return
 	}
 
-	if err = txn.doAddReferences(refRecords); err != nil {
+	if err = txn.doAddReferences(refRecords, 0); err != nil {
 		return
 	}
 

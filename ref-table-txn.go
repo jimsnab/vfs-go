@@ -62,17 +62,24 @@ func (txn *refTableTransaction) AddReferences(refRecords []refRecord) (err error
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 
-	return txn.doAddReferences(refRecords)
+	return txn.doAddReferences(refRecords, 0)
 }
 
-func (txn *refTableTransaction) doAddReferences(refRecords []refRecord) (err error) {
+func (txn *refTableTransaction) AddReferencesAtShard(refRecords []refRecord, refShard uint64) (err error) {
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
+
+	return txn.doAddReferences(refRecords, refShard)
+}
+
+func (txn *refTableTransaction) doAddReferences(refRecords []refRecord, refShard uint64) (err error) {
 	table := txn.table
 	if table.cancelFn == nil {
 		err = ErrNotStarted
 		return
 	}
 
-	f, shard, err := table.openShard(0, false)
+	f, shard, err := table.openShard(refShard, false)
 	if err != nil {
 		return
 	}

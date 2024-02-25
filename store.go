@@ -55,10 +55,12 @@ type (
 	}
 
 	StoreRecord struct {
-		KeyGroup string
-		Key      [20]byte
-		Content  []byte
-		RefLists map[string][]StoreReference
+		shard     uint64 // if 0, the shard is computed
+		timestamp int64  // if 0, the current timestamp is used
+		KeyGroup  string
+		Key       [20]byte
+		Content   []byte
+		RefLists  map[string][]StoreReference
 	}
 
 	StoreReference struct {
@@ -79,7 +81,8 @@ type (
 	StoreIterator func(keyGroup string, key [20]byte, timestamp time.Time) (err error)
 
 	store struct {
-		mu              sync.Mutex
+		docMu           sync.Mutex
+		iterMu          sync.Mutex
 		ai              *avlIndex
 		shards          map[uint64]afero.File
 		accessed        map[uint64]time.Time
@@ -97,6 +100,11 @@ type (
 	}
 
 	prestartCallback func(st *store)
+
+	openShard struct {
+		shard uint64
+		f     afero.File
+	}
 )
 
 func NewStore(cfg *VfsConfig) (st Store, err error) {
@@ -162,34 +170,9 @@ func newStoreInternal(cfg *VfsConfig, psfn prestartCallback) (st *store, err err
 	return
 }
 
-func (st *store) calcShard(when time.Time) uint64 {
-	// convert time to an integral
-	divisor := uint64(24 * 60 * 60 * 1000 * st.cfg.ShardDurationDays)
-	if divisor < 1 {
-		divisor = 1
-	}
-	shard := uint64(when.UnixMilli())
-	shard = shard / divisor
-
-	// multiply by 10 to leave some numeric space between shards
-	//
-	// for example, it may be desired to compact old shards, and having space to insert
-	// another allows transactions to be moved one by one, while the rest of the system
-	// continues to operate
-	//
-	// it also leaves space for migration to a new format
-	shard *= 10
-	return shard
-}
-
-func (st *store) timeFromShard(shard uint64) time.Time {
-	ms := int64(shard/10) * int64(24*60*60*1000*st.cfg.ShardDurationDays)
-	return time.Unix(int64(ms/1000), (ms%1000)*1000*1000)
-}
-
 func (st *store) openShard(request uint64, forRead bool) (f afero.File, shard uint64, err error) {
 	if request == 0 {
-		shard = st.calcShard(time.Now().UTC())
+		shard = st.cfg.calcShard(time.Now().UTC())
 	} else {
 		shard = request
 	}
@@ -214,8 +197,8 @@ func (st *store) openShard(request uint64, forRead bool) (f afero.File, shard ui
 
 // Background task worker
 func (st *store) closeIdleShards() {
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.docMu.Lock()
+	defer st.docMu.Unlock()
 
 	cutoff := time.Now().UTC().Add(-st.idleFileHandle)
 	for sh, ts := range st.accessed {
@@ -263,7 +246,7 @@ func (st *store) purgeShards(cutoff time.Time) (err error) {
 			continue
 		}
 
-		ts := st.timeFromShard(shard)
+		ts := st.cfg.timeFromShard(shard)
 		if ts.Before(cutoff) {
 			if err = AppFs.Remove(path.Join(st.cfg.DataDir, fileName)); err != nil {
 				return
@@ -277,30 +260,38 @@ func (st *store) purgeShards(cutoff time.Time) (err error) {
 }
 
 func (st *store) StoreContent(records []StoreRecord, onComplete CommitCompleted) (err error) {
-	st.mu.Lock()
+	st.docMu.Lock()
+	if st.iterMu.TryLock() {
+		st.iterMu.Unlock()
+	} else {
+		err = errors.New("can't store content during iteration")
+		st.docMu.Unlock()
+		return
+	}
 
-	err = st.doStoreContent(records, func(failure error) {
-		// after i/o
-		if onComplete != nil {
+	wrapped := onComplete
+	if wrapped != nil {
+		wrapped = func(failure error) {
 			onComplete(failure)
+			st.docMu.Unlock()
 		}
-		st.mu.Unlock()
-	})
+	}
+
+	err = st.doStoreContent(records, wrapped)
 	if err != nil {
 		// immediate error
 		if onComplete != nil {
 			onComplete(err)
 		}
-		st.mu.Unlock()
+		st.docMu.Unlock()
+	} else if onComplete == nil {
+		st.docMu.Unlock()
 	}
 	return
 }
 
 func (st *store) doStoreContent(records []StoreRecord, onComplete CommitCompleted) (err error) {
-	f, shard, err := st.openShard(0, false)
-	if err != nil {
-		return
-	}
+	modifiedShards := make(map[uint64]openShard, len(records))
 
 	// begin outer transaction
 	tm := newTransactionManager(onComplete)
@@ -309,7 +300,7 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 		return
 	}
 	defer func() {
-		// Those who directly make the transaction manager don't call EndTransaction,
+		// Where one of those who directly make the transaction manager and don't call EndTransaction,
 		// but instead call tm.Resolve.
 		err = tm.Resolve(err)
 	}()
@@ -317,6 +308,18 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 	// determine which ref tables are being used and attach update instances to the transaction
 	refTableTxns := map[string]*refTableTransaction{}
 	for _, record := range records {
+		// if requested shard is 0, access the latest shard; otherwise, access the specified shard
+		shard := record.shard
+		_, opened := modifiedShards[shard]
+		if !opened {
+			var f afero.File
+			f, shard, err = st.openShard(record.shard, false)
+			if err != nil {
+				return
+			}
+			modifiedShards[record.shard] = openShard{f: f, shard: shard}
+		}
+
 		for name := range record.RefLists {
 			_, exists := refTableTxns[name]
 			if !exists {
@@ -337,6 +340,10 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 	}
 
 	for _, record := range records {
+		tuple := modifiedShards[record.shard]
+		f := tuple.f
+		shard := tuple.shard
+
 		//
 		// Store the main document.
 		//
@@ -375,7 +382,7 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 			return
 		}
 
-		if txn.Set(record.KeyGroup, record.Key, shard, uint64(offset)); err != nil {
+		if txn.setWithTimestamp(record.KeyGroup, record.Key, shard, uint64(offset), record.timestamp); err != nil {
 			return
 		}
 
@@ -389,15 +396,17 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 			for _, refKey := range refList {
 				refRecords = append(refRecords, refRecord{refKey.KeyGroup, refKey.ValueKey, record.Key})
 			}
-			if err = rtxn.AddReferences(refRecords); err != nil {
+			if err = rtxn.AddReferencesAtShard(refRecords, shard); err != nil {
 				return
 			}
 		}
 	}
 
 	if st.cfg.Sync {
-		if err = f.Sync(); err != nil {
-			return
+		for _, ms := range modifiedShards {
+			if err = ms.f.Sync(); err != nil {
+				return
+			}
 		}
 	}
 
@@ -405,8 +414,8 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 }
 
 func (st *store) RetrieveContent(keyGroup string, key [20]byte) (content []byte, err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.docMu.Lock()
+	defer st.docMu.Unlock()
 
 	txn, err := st.ai.BeginTransaction(nil)
 	if err != nil {
@@ -484,8 +493,8 @@ func (st *store) doLoadContent(shard uint64, position uint64) (content []byte, e
 }
 
 func (st *store) GetKeyTimestamp(keyGroup string, key [20]byte) (ts time.Time, err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.docMu.Lock()
+	defer st.docMu.Unlock()
 
 	txn, err := st.ai.BeginTransaction(nil)
 	if err != nil {
@@ -507,8 +516,8 @@ func (st *store) GetKeyTimestamp(keyGroup string, key [20]byte) (ts time.Time, e
 // return 'refKeys' provides an array of store keys. This allows index lookup of a value that is
 // inside the stored content.
 func (st *store) RetrieveReferences(name, keyGroup string, valueKey [20]byte) (refKeys [][20]byte, err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.docMu.Lock()
+	defer st.docMu.Unlock()
 
 	table := st.refTables[name]
 	if table != nil {
@@ -518,8 +527,15 @@ func (st *store) RetrieveReferences(name, keyGroup string, valueKey [20]byte) (r
 }
 
 func (st *store) PurgeOld(onComplete CommitCompleted) (cutoff time.Time, err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.docMu.Lock()
+	defer st.docMu.Unlock()
+
+	if st.iterMu.TryLock() {
+		st.iterMu.Unlock()
+	} else {
+		err = errors.New("can't delete content during iteration")
+		return
+	}
 
 	retentionPeriod := time.Duration(float64(time.Hour*24) * st.cfg.ShardRetentionDays)
 	cutoff = time.Now().UTC().Add(-retentionPeriod)
@@ -573,8 +589,8 @@ func (st *store) Stats() StoreStats {
 }
 
 func (st *store) Sync() (err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.docMu.Lock()
+	defer st.docMu.Unlock()
 
 	for _, f := range st.shards {
 		terr := f.Sync()
@@ -608,8 +624,8 @@ func (st *store) run(ctx context.Context) {
 }
 
 func (st *store) IterateByKeys(iter StoreIterator) (err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.iterMu.Lock()
+	defer st.iterMu.Unlock()
 
 	if st.cancelFn == nil {
 		err = os.ErrClosed
@@ -622,8 +638,8 @@ func (st *store) IterateByKeys(iter StoreIterator) (err error) {
 }
 
 func (st *store) IterateByTimestamp(iter StoreIterator) (err error) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.iterMu.Lock()
+	defer st.iterMu.Unlock()
 
 	if st.cancelFn == nil {
 		err = os.ErrClosed
@@ -637,20 +653,20 @@ func (st *store) IterateByTimestamp(iter StoreIterator) (err error) {
 
 func (st *store) Close() (err error) {
 	// stop the run() goroutine
-	st.mu.Lock()
+	st.docMu.Lock()
 	if st.cancelFn == nil {
 		err = os.ErrClosed
-		st.mu.Unlock()
+		st.docMu.Unlock()
 		return
 	}
 	st.cancelFn()
 	st.cancelFn = nil
-	st.mu.Unlock()
+	st.docMu.Unlock()
 	st.wg.Wait()
 
 	// close the resources
-	st.mu.Lock()
-	defer st.mu.Unlock()
+	st.docMu.Lock()
+	defer st.docMu.Unlock()
 
 	terr := st.ai.Close()
 	if terr != nil {

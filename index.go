@@ -27,7 +27,6 @@ type (
 		keyGroup    string
 		availableCh chan bool
 		releaseCh   chan struct{}
-		mu          sync.Mutex
 		node        *avlNode
 		failure     error
 	}

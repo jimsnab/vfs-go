@@ -21,6 +21,10 @@ type (
 )
 
 func (txn *avlTransaction) Set(keyGroup string, key [20]byte, shard, position uint64) (ts time.Time, err error) {
+	return txn.setWithTimestamp(keyGroup, key, shard, position, 0)
+}
+
+func (txn *avlTransaction) setWithTimestamp(keyGroup string, key [20]byte, shard, position uint64, timestamp int64) (ts time.Time, err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 
@@ -30,7 +34,7 @@ func (txn *avlTransaction) Set(keyGroup string, key [20]byte, shard, position ui
 	}
 	txn.touched[keyGroup] = struct{}{}
 
-	node, _, err := tree.Set(key, shard, position)
+	node, _, err := tree.setWithTimestamp(key, shard, position, timestamp)
 	if err != nil {
 		return
 	}
