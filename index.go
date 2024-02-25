@@ -23,13 +23,16 @@ type (
 		removed   map[[20]byte]struct{}
 	}
 
-	indexIterator struct {
-		done        bool
-		availableCh chan struct{}
-		releaseCh   chan error
+	timestampIterator struct {
+		keyGroup    string
+		availableCh chan bool
+		releaseCh   chan struct{}
+		mu          sync.Mutex
 		node        *avlNode
 		failure     error
 	}
+
+	indexIteratorFn func(keyGroup string, node *avlNode) (err error)
 )
 
 var AppFs = afero.NewOsFs()
@@ -248,103 +251,83 @@ func (ai *avlIndex) doRemoveBefore(cutoff time.Time) (err error) {
 	return
 }
 
-func (ai *avlIndex) IterateByTimestamp(iter avlIterator) (err error) {
+func (ai *avlIndex) IterateByTimestamp(iter indexIteratorFn) (err error) {
 	var wg sync.WaitGroup
-	var mu sync.Mutex // synchronizes 'done' state
-	nodes := map[*indexIterator]bool{}
+	nodes := map[*timestampIterator]bool{}
 
-	for _, t := range ai.trees {
-		ii := indexIterator{
-			availableCh: make(chan struct{}),
-			releaseCh:   make(chan error),
+	for keyGroup, t := range ai.trees {
+		ti := timestampIterator{
+			availableCh: make(chan bool),
+			releaseCh:   make(chan struct{}),
+			keyGroup:    keyGroup,
 		}
 
 		wrapper := func(node *avlNode) (err error) {
 			// post the node
-			ii.failure = err
-			ii.node = node
-			ii.availableCh <- struct{}{}
+			ti.node = node
+			ti.availableCh <- true
 
 			// wait for aggregation to process the result
-			err = <-ii.releaseCh
+			<-ti.releaseCh
+			if ti.failure != nil {
+				err = ti.failure
+			}
 			return
 		}
 
 		wg.Add(1)
-		nodes[&ii] = false
+		nodes[&ti] = false
 		go func(tree *avlTree) {
-			defer wg.Done()
-
-			ierr := tree.IterateByTimestamp(wrapper)
-
-			mu.Lock()
-			ii.done = true
-			ii.failure = ierr
-			mu.Unlock()
+			ti.failure = tree.IterateByTimestamp(wrapper)
+			close(ti.availableCh)
+			wg.Done()
 		}(t)
 	}
 
 	for {
 		// capture the next node from each index iterator
 		bestTs := int64(math.MaxInt64)
-		var bestIter *indexIterator
-		for ii, captured := range nodes {
+		var chosen *timestampIterator
+		for ti, captured := range nodes {
 			if !captured {
-				mu.Lock()
-				iiDone := ii.done
-				mu.Unlock()
-
-				if iiDone {
+				ready := <-ti.availableCh
+				if !ready {
+					if ti.failure != nil {
+						err = ti.failure
+						break
+					}
 					continue
 				}
 
-				<-ii.availableCh
-				nodes[ii] = true
+				nodes[ti] = true
 			}
 
-			if ii.failure != nil {
-				bestIter = ii
-				break
-			}
-			if ii.node.timestamp < bestTs {
-				bestTs = ii.node.timestamp
-				bestIter = ii
+			if ti.node.timestamp < bestTs {
+				bestTs = ti.node.timestamp
+				chosen = ti
 			}
 		}
 
-		if bestIter == nil {
-			// nothing more to iterate
-			wg.Wait()
-			return
-		}
-
-		if bestIter.failure != nil {
-			err = bestIter.failure
-
-			// release the unfailed iterators
-			for ii := range nodes {
-				mu.Lock()
-				iiDone := ii.done
-				mu.Unlock()
-				if !iiDone {
-					ii.releaseCh <- err
-				}
+		if chosen == nil || err != nil {
+			// finish
+			for ti := range nodes {
+				ti.failure = err
+				close(ti.releaseCh)
 			}
-
 			wg.Wait()
 			return
 		}
 
 		// invoke callback
-		iter(bestIter.node)
+		iter(chosen.keyGroup, chosen.node)
 
 		// release the processed iterator
-		nodes[bestIter] = false
-		bestIter.releaseCh <- nil
+		nodes[chosen] = false
+		chosen.releaseCh <- struct{}{}
 	}
 }
 
-func (ai *avlIndex) IterateByKeys(iter avlIterator) (err error) {
+func (ai *avlIndex) IterateByKeys(iter indexIteratorFn) (err error) {
 	keyGroups := make([]string, 0, len(ai.trees))
 	for keyGroup := range ai.trees {
 		keyGroups = append(keyGroups, keyGroup)
@@ -352,7 +335,9 @@ func (ai *avlIndex) IterateByKeys(iter avlIterator) (err error) {
 	slices.Sort(keyGroups)
 	for _, keyGroup := range keyGroups {
 		tree := ai.trees[keyGroup]
-		err = tree.IterateByKeys(iter)
+		err = tree.IterateByKeys(func(node *avlNode) error {
+			return iter(keyGroup, node)
+		})
 		if err != nil {
 			return
 		}

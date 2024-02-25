@@ -79,456 +79,173 @@ func refTestInitializeEx(t *testing.T, multishard bool) (rts *refTestState) {
 func TestRefAndGetOne(t *testing.T) {
 	rts := refTestInitialize(t)
 
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tbl.Close()
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
 
-	valueKey := rts.testKeys[0]
-	storeKey := rts.testKeys[1]
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tbl.Close()
 
-	records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
-	terr := tbl.AddReferences(records)
-	if terr != ErrNotStarted {
-		t.Fatal(terr)
-	}
+		valueKey := rts.testKeys[0]
+		storeKey := rts.testKeys[1]
 
-	tbl.Start()
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
+		records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
+		terr := tbl.AddReferences(records)
+		if terr != ErrNotStarted {
+			t.Fatal(terr)
+		}
 
-	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+		tbl.Start()
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
 
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
+		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if !keysEqual(refs[0], storeKey) {
-		t.Fatal("refs not equal")
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey) {
+			t.Fatal("refs not equal")
+		}
 	}
 }
 
 func TestRefAndGetOneReopen(t *testing.T) {
 	rts := refTestInitialize(t)
 
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tbl.Close()
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
 
-	valueKey := rts.testKeys[0]
-	storeKey := rts.testKeys[1]
-
-	records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
-	terr := tbl.AddReferences(records)
-	if terr != ErrNotStarted {
-		t.Fatal(terr)
-	}
-
-	tbl.cleanupInterval = time.Millisecond * 20
-	tbl.idleFileHandle = time.Millisecond * 40
-
-	tbl.Start()
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
-
-	// wait for file handle close
-	for {
-		stats := tbl.Stats()
-		if stats.ShardsClosed == 1 {
-			break
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(time.Millisecond * 20)
-	}
+		defer tbl.Close()
 
-	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+		valueKey := rts.testKeys[0]
+		storeKey := rts.testKeys[1]
 
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
+		records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
+		terr := tbl.AddReferences(records)
+		if terr != ErrNotStarted {
+			t.Fatal(terr)
+		}
 
-	if !keysEqual(refs[0], storeKey) {
-		t.Fatal("refs not equal")
-	}
+		tbl.cleanupInterval = time.Millisecond * 20
+		tbl.idleFileHandle = time.Millisecond * 40
 
-	stats := tbl.Stats()
-	if stats.ShardsOpened != 2 || stats.ShardsClosed != 1 {
-		t.Fatal("unexpected open/close counts")
+		tbl.Start()
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
+
+		// wait for file handle close
+		for {
+			stats := tbl.Stats()
+			if stats.ShardsClosed == 1 {
+				break
+			}
+			time.Sleep(time.Millisecond * 20)
+		}
+
+		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey) {
+			t.Fatal("refs not equal")
+		}
+
+		stats := tbl.Stats()
+		if stats.ShardsOpened != 2 || stats.ShardsClosed != 1 {
+			t.Fatal("unexpected open/close counts")
+		}
 	}
 }
 
 func TestRefAndGetTwo(t *testing.T) {
 	rts := refTestInitialize(t)
 
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tbl.Start()
-	defer tbl.Close()
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
 
-	valueKey1 := rts.testKeys[0]
-	valueKey2 := rts.testKeys[1]
-	storeKey := rts.testKeys[2]
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
 
-	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey}, {kTestKeyGroup, valueKey2, storeKey}}
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
+		valueKey1 := rts.testKeys[0]
+		valueKey2 := rts.testKeys[1]
+		storeKey := rts.testKeys[2]
 
-	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
-	if err != nil {
-		t.Fatal(err)
-	}
+		records := []refRecord{{kTestKeyGroup, valueKey1, storeKey}, {kTestKeyGroup, valueKey2, storeKey}}
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
 
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
+		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if !keysEqual(refs[0], storeKey) {
-		t.Fatal("refs not equal")
-	}
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
 
-	refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
-	if err != nil {
-		t.Fatal(err)
-	}
+		if !keysEqual(refs[0], storeKey) {
+			t.Fatal("refs not equal")
+		}
 
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
+		refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	if !keysEqual(refs[0], storeKey) {
-		t.Fatal("refs not equal")
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey) {
+			t.Fatal("refs not equal")
+		}
 	}
 }
 
 func TestRefAndGetOneWithDup(t *testing.T) {
 	rts := refTestInitialize(t)
 
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tbl.Start()
-	defer tbl.Close()
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
+
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
+
+		valueKey := rts.testKeys[0]
+		storeKey := rts.testKeys[1]
+
+		records := []refRecord{{kTestKeyGroup, valueKey, storeKey}, {kTestKeyGroup, valueKey, storeKey}}
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
 
-	valueKey := rts.testKeys[0]
-	storeKey := rts.testKeys[1]
-
-	records := []refRecord{{kTestKeyGroup, valueKey, storeKey}, {kTestKeyGroup, valueKey, storeKey}}
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
-
-	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey) {
-		t.Fatal("refs[0] not equal")
-	}
-}
-
-func TestRefTwoByTwo(t *testing.T) {
-	rts := refTestInitialize(t)
-
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tbl.Start()
-	defer tbl.Close()
-
-	valueKey1 := rts.testKeys[0]
-	valueKey2 := rts.testKeys[1]
-	storeKey1 := rts.testKeys[2]
-	storeKey2 := rts.testKeys[3]
-
-	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}}
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
-
-	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey1) {
-		t.Fatal("refs[0] not equal")
-	}
-
-	refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey2) {
-		t.Fatal("refs[0] not equal")
-	}
-}
-
-func TestRefThreeByTwo(t *testing.T) {
-	rts := refTestInitialize(t)
-
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tbl.Start()
-	defer tbl.Close()
-
-	valueKey1 := rts.testKeys[0]
-	valueKey2 := rts.testKeys[1]
-	valueKey3 := rts.testKeys[2]
-	storeKey1 := rts.testKeys[3]
-	storeKey2 := rts.testKeys[4]
-
-	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}, {kTestKeyGroup, valueKey3, storeKey2}}
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
-
-	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey1) {
-		t.Fatal("refs[0] not equal")
-	}
-
-	refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey2) {
-		t.Fatal("refs[0] not equal")
-	}
-
-	refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey3)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey2) {
-		t.Fatal("refs[0] not equal")
-	}
-}
-
-func TestRefTwoByThree(t *testing.T) {
-	rts := refTestInitialize(t)
-
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tbl.Start()
-	defer tbl.Close()
-
-	valueKey1 := rts.testKeys[0]
-	valueKey2 := rts.testKeys[1]
-	storeKey1 := rts.testKeys[2]
-	storeKey2 := rts.testKeys[3]
-	storeKey3 := rts.testKeys[4]
-
-	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}, {kTestKeyGroup, valueKey1, storeKey3}}
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
-
-	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 2 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey1) {
-		t.Fatal("refs[0] not equal")
-	}
-
-	if !keysEqual(refs[1], storeKey3) {
-		t.Fatal("refs[1] not equal")
-	}
-
-	refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey2) {
-		t.Fatal("refs[0] not equal")
-	}
-}
-
-func TestRefAndGetOneThenOne(t *testing.T) {
-	rts := refTestInitialize(t)
-
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tbl.Start()
-	defer tbl.Close()
-
-	valueKey1 := rts.testKeys[0]
-	valueKey2 := rts.testKeys[1]
-	storeKey := rts.testKeys[2]
-
-	records := []refRecord{{kTestKeyGroup, valueKey1, storeKey}}
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
-
-	records = []refRecord{{kTestKeyGroup, valueKey2, storeKey}}
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
-
-	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey) {
-		t.Fatal("refs not equal")
-	}
-
-	refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 1 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey) {
-		t.Fatal("refs not equal")
-	}
-}
-
-func TestRefAndGetOneThenAppend(t *testing.T) {
-	rts := refTestInitialize(t)
-
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tbl.Start()
-	defer tbl.Close()
-
-	valueKey := rts.testKeys[0]
-	storeKey1 := rts.testKeys[1]
-	storeKey2 := rts.testKeys[2]
-
-	records := []refRecord{{kTestKeyGroup, valueKey, storeKey1}}
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
-
-	records = []refRecord{{kTestKeyGroup, valueKey, storeKey2}}
-	if err = tbl.AddReferences(records); err != nil {
-		t.Fatal(err)
-	}
-
-	refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(refs) != 2 {
-		t.Fatal("wrong length")
-	}
-
-	if !keysEqual(refs[0], storeKey1) {
-		t.Fatal("refs[0] not equal")
-	}
-
-	if !keysEqual(refs[1], storeKey2) {
-		t.Fatal("refs[1] not equal")
-	}
-}
-
-func TestRefAndGet5(t *testing.T) {
-	rts := refTestInitialize(t)
-
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tbl.Start()
-	defer tbl.Close()
-
-	m := map[[20]byte][20]byte{}
-	var wg sync.WaitGroup
-
-	for i := 0; i < 5; i++ {
-		valueKey := rts.testKeys[i]
-		storeKey := rts.testKeys[mrand.Intn(5)+5]
-
-		m[valueKey] = storeKey
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
-			if err = tbl.AddReferences(records); err != nil {
-				panic(err)
-			}
-		}()
-	}
-	wg.Wait()
-
-	for valueKey, storeKey := range m {
 		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
 		if err != nil {
 			t.Fatal(err)
@@ -544,54 +261,381 @@ func TestRefAndGet5(t *testing.T) {
 	}
 }
 
-func TestRefAndGet5000(t *testing.T) {
+func TestRefTwoByTwo(t *testing.T) {
 	rts := refTestInitialize(t)
 
-	tbl, err := newRefTable(&rts.cfg, "example")
-	if err != nil {
-		t.Fatal(err)
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
+
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
+
+		valueKey1 := rts.testKeys[0]
+		valueKey2 := rts.testKeys[1]
+		storeKey1 := rts.testKeys[2]
+		storeKey2 := rts.testKeys[3]
+
+		records := []refRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}}
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
+
+		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey1) {
+			t.Fatal("refs[0] not equal")
+		}
+
+		refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey2) {
+			t.Fatal("refs[0] not equal")
+		}
 	}
-	tbl.Start()
-	defer tbl.Close()
+}
 
-	var wg sync.WaitGroup
+func TestRefThreeByTwo(t *testing.T) {
+	rts := refTestInitialize(t)
 
-	for i := 0; i < 5000; i++ {
-		valueKey := rts.testKeys[mrand.Intn(5)]
-		storeKey := rts.testKeys[mrand.Intn(5)+5]
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
-			if err = tbl.AddReferences(records); err != nil {
-				panic(err)
-			}
-		}()
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
+
+		valueKey1 := rts.testKeys[0]
+		valueKey2 := rts.testKeys[1]
+		valueKey3 := rts.testKeys[2]
+		storeKey1 := rts.testKeys[3]
+		storeKey2 := rts.testKeys[4]
+
+		records := []refRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}, {kTestKeyGroup, valueKey3, storeKey2}}
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
+
+		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey1) {
+			t.Fatal("refs[0] not equal")
+		}
+
+		refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey2) {
+			t.Fatal("refs[0] not equal")
+		}
+
+		refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey3)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey2) {
+			t.Fatal("refs[0] not equal")
+		}
 	}
-	wg.Wait()
+}
 
-	for _, valueKey := range rts.testKeys[0:5] {
+func TestRefTwoByThree(t *testing.T) {
+	rts := refTestInitialize(t)
+
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
+
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
+
+		valueKey1 := rts.testKeys[0]
+		valueKey2 := rts.testKeys[1]
+		storeKey1 := rts.testKeys[2]
+		storeKey2 := rts.testKeys[3]
+		storeKey3 := rts.testKeys[4]
+
+		records := []refRecord{{kTestKeyGroup, valueKey1, storeKey1}, {kTestKeyGroup, valueKey2, storeKey2}, {kTestKeyGroup, valueKey1, storeKey3}}
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
+
+		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 2 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey1) {
+			t.Fatal("refs[0] not equal")
+		}
+
+		if !keysEqual(refs[1], storeKey3) {
+			t.Fatal("refs[1] not equal")
+		}
+
+		refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey2) {
+			t.Fatal("refs[0] not equal")
+		}
+	}
+}
+
+func TestRefAndGetOneThenOne(t *testing.T) {
+	rts := refTestInitialize(t)
+
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
+
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
+
+		valueKey1 := rts.testKeys[0]
+		valueKey2 := rts.testKeys[1]
+		storeKey := rts.testKeys[2]
+
+		records := []refRecord{{kTestKeyGroup, valueKey1, storeKey}}
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
+
+		records = []refRecord{{kTestKeyGroup, valueKey2, storeKey}}
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
+
+		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey1)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey) {
+			t.Fatal("refs not equal")
+		}
+
+		refs, err = tbl.RetrieveReferences(kTestKeyGroup, valueKey2)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 1 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], storeKey) {
+			t.Fatal("refs not equal")
+		}
+	}
+}
+
+func TestRefAndGetOneThenAppend(t *testing.T) {
+	rts := refTestInitialize(t)
+
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
+
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
+
+		valueKey := rts.testKeys[0]
+		storeKey1 := rts.testKeys[1]
+		storeKey2 := rts.testKeys[2]
+
+		records := []refRecord{{kTestKeyGroup, valueKey, storeKey1}}
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
+
+		records = []refRecord{{kTestKeyGroup, valueKey, storeKey2}}
+		if err = tbl.AddReferences(records); err != nil {
+			t.Fatal(err)
+		}
+
 		refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if len(refs) > 5 {
+		if len(refs) != 2 {
 			t.Fatal("wrong length")
 		}
 
-		for _, ref := range refs {
-			found := false
-			for _, sk := range rts.testKeys[5:10] {
-				if !keysEqual(ref, sk) {
-					found = true
-					break
+		if !keysEqual(refs[0], storeKey1) {
+			t.Fatal("refs[0] not equal")
+		}
+
+		if !keysEqual(refs[1], storeKey2) {
+			t.Fatal("refs[1] not equal")
+		}
+	}
+}
+
+func TestRefAndGet5(t *testing.T) {
+	rts := refTestInitialize(t)
+
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
+
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
+
+		m := map[[20]byte][20]byte{}
+		var wg sync.WaitGroup
+
+		for i := 0; i < 5; i++ {
+			valueKey := rts.testKeys[i]
+			storeKey := rts.testKeys[mrand.Intn(5)+5]
+
+			m[valueKey] = storeKey
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
+				if err = tbl.AddReferences(records); err != nil {
+					panic(err)
 				}
+			}()
+		}
+		wg.Wait()
+
+		for valueKey, storeKey := range m {
+			refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
+			if err != nil {
+				t.Fatal(err)
 			}
 
-			if !found {
-				t.Fatal("ref not equal")
+			if len(refs) != 1 {
+				t.Fatal("wrong length")
+			}
+
+			if !keysEqual(refs[0], storeKey) {
+				t.Fatal("refs[0] not equal")
+			}
+		}
+	}
+}
+
+func TestRefAndGet5000(t *testing.T) {
+	rts := refTestInitialize(t)
+
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
+
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
+
+		var wg sync.WaitGroup
+
+		for i := 0; i < 5000; i++ {
+			valueKey := rts.testKeys[mrand.Intn(5)]
+			storeKey := rts.testKeys[mrand.Intn(5)+5]
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
+				if err = tbl.AddReferences(records); err != nil {
+					panic(err)
+				}
+			}()
+		}
+		wg.Wait()
+
+		for _, valueKey := range rts.testKeys[0:5] {
+			refs, err := tbl.RetrieveReferences(kTestKeyGroup, valueKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(refs) > 5 {
+				t.Fatal("wrong length")
+			}
+
+			for _, ref := range refs {
+				found := false
+				for _, sk := range rts.testKeys[5:10] {
+					if !keysEqual(ref, sk) {
+						found = true
+						break
+					}
+				}
+
+				if !found {
+					t.Fatal("ref not equal")
+				}
 			}
 		}
 	}
@@ -602,7 +646,16 @@ func TestRefAndGetMany(t *testing.T) {
 
 	count := 12500
 
-	table, err := newRefTable(&rts.cfg, "example")
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
+
+		testRefAndGetManyWorker(t, rts, count)
+	}
+}
+
+func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
+
+	table, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%t", rts.cfg.StoreKeyInData))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,7 +929,7 @@ func TestRefAndGetMany(t *testing.T) {
 			}
 
 			survivors := map[[20]byte]struct{}{}
-			err = table.index.IterateByKeys(func(node *avlNode) error {
+			err = table.index.IterateByKeys(func(keyGroup string, node *avlNode) error {
 				survivors[node.key] = struct{}{}
 				return nil
 			})
@@ -939,7 +992,6 @@ func TestRefAndGetMany(t *testing.T) {
 	if table.indexKeysRemoved == 0 {
 		t.Fatal("index keys were not removed")
 	}
-
 }
 
 func TestStoreRefTablePurge(t *testing.T) {
@@ -959,7 +1011,16 @@ func TestStoreRefTablePurge(t *testing.T) {
 	fmt.Printf("shard life: %d ms\n", uint64(24*60*60*1000*cfg.ShardDurationDays))
 	fmt.Printf("shard retention: %d ms\n", uint64(24*60*60*1000*cfg.ShardRetentionDays))
 
-	table, err := newRefTable(&cfg, "a")
+	for pass := range 2 {
+		cfg.StoreKeyInData = (pass == 1)
+
+		testStoreRefTablePurgeWorker(t, ts, &cfg)
+	}
+}
+
+func testStoreRefTablePurgeWorker(t *testing.T, ts *testState, cfg *VfsConfig) {
+
+	table, err := newRefTable(cfg, "a")
 	if err != nil {
 		t.Fatal(err)
 	}

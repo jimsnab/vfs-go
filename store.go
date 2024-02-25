@@ -1,7 +1,6 @@
 package vfs
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -77,7 +76,7 @@ type (
 		ShardsRemoved uint64
 	}
 
-	StoreIterator func(key [20]byte, timestamp time.Time) (err error)
+	StoreIterator func(keyGroup string, key [20]byte, timestamp time.Time) (err error)
 
 	store struct {
 		mu              sync.Mutex
@@ -94,6 +93,7 @@ type (
 		cleanupInterval time.Duration
 		wg              sync.WaitGroup
 		cancelFn        context.CancelFunc
+		storeKeyInData  bool
 	}
 
 	prestartCallback func(st *store)
@@ -117,6 +117,7 @@ func newStoreInternal(cfg *VfsConfig, psfn prestartCallback) (st *store, err err
 		refTables:       map[string]*refTable{},
 		idleFileHandle:  time.Minute * 15,
 		cleanupInterval: time.Minute,
+		storeKeyInData:  cfg.StoreKeyInData,
 	}
 
 	if s.cfg.ShardDurationDays == 0 {
@@ -345,19 +346,18 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 			return
 		}
 
-		var plain []byte
-		if plain, err = uncompress(compressed); err != nil {
-			panic("can't uncompress")
-		}
-
-		if !bytes.Equal(plain, record.Content) {
-			panic("not a roundtrip")
-		}
-
 		compressedLen := len(compressed)
-		sizedContent := make([]byte, compressedLen+4)
-		binary.BigEndian.PutUint32(sizedContent[0:4], uint32(compressedLen))
-		copy(sizedContent[4:], compressed)
+		var sizedContent []byte
+		if !st.storeKeyInData {
+			sizedContent = make([]byte, compressedLen+4)
+			binary.BigEndian.PutUint32(sizedContent[0:4], uint32(compressedLen))
+			copy(sizedContent[4:], compressed)
+		} else {
+			sizedContent = make([]byte, compressedLen+24)
+			binary.BigEndian.PutUint32(sizedContent[0:4], uint32(compressedLen))
+			copy(sizedContent[4:24], record.Key[:])
+			copy(sizedContent[24:], compressed)
+		}
 
 		var offset int64
 		if offset, err = f.Seek(0, io.SeekEnd); err != nil {
@@ -422,46 +422,59 @@ func (st *store) RetrieveContent(keyGroup string, key [20]byte) (content []byte,
 	}
 
 	if found {
-		var f afero.File
-		f, _, err = st.openShard(shard, true)
-		if err != nil {
-			// key indexed but shard does not exist; treat if not indexed
-			if strings.HasSuffix(err.Error(), os.ErrNotExist.Error()) {
-				err = nil
-			}
-			return
-		}
+		content, err = st.doLoadContent(shard, position)
+	}
 
-		hdr := make([]byte, 4)
-		var n int
-		if n, err = f.ReadAt(hdr, int64(position)); err != nil {
-			return
-		}
+	return
+}
 
-		if n != 4 {
-			err = errors.New("short read for content length")
-			return
+func (st *store) doLoadContent(shard uint64, position uint64) (content []byte, err error) {
+	var f afero.File
+	f, _, err = st.openShard(shard, true)
+	if err != nil {
+		// key indexed but shard does not exist; treat if not indexed
+		if strings.HasSuffix(err.Error(), os.ErrNotExist.Error()) {
+			err = nil
 		}
+		return
+	}
 
-		length := binary.BigEndian.Uint32(hdr)
-		if length > 128*1024 {
-			err = errors.New("content length too long")
-			return
-		}
+	hdr := make([]byte, 4)
+	var n int
+	if n, err = f.ReadAt(hdr, int64(position)); err != nil {
+		return
+	}
 
-		data := make([]byte, length)
-		if n, err = f.ReadAt(data, int64(position+4)); err != nil {
-			return
-		}
+	if n != 4 {
+		err = errors.New("short read for content length")
+		return
+	}
 
-		if n != int(length) {
-			err = errors.New("short read for content")
-			return
-		}
+	length := binary.BigEndian.Uint32(hdr)
+	if length > 128*1024 {
+		err = errors.New("content length too long")
+		return
+	}
 
-		if content, err = uncompress(data); err != nil {
-			return
-		}
+	contentPos := int64(position)
+	if st.storeKeyInData {
+		contentPos += 24
+	} else {
+		contentPos += 4
+	}
+
+	data := make([]byte, length)
+	if n, err = f.ReadAt(data, contentPos); err != nil {
+		return
+	}
+
+	if n != int(length) {
+		err = errors.New("short read for content")
+		return
+	}
+
+	if content, err = uncompress(data); err != nil {
+		return
 	}
 
 	return
@@ -486,6 +499,10 @@ func (st *store) GetKeyTimestamp(keyGroup string, key [20]byte) (ts time.Time, e
 	return
 }
 
+// Retrieves reference array where 'name' is the kind of reference (e.g., a field within the data),
+// 'keyGroup' is the reference index group, and 'valueKey' is up to 20 bytes of the value. The
+// return 'refKeys' provides an array of store keys. This allows index lookup of a value that is
+// inside the stored content.
 func (st *store) RetrieveReferences(name, keyGroup string, valueKey [20]byte) (refKeys [][20]byte, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -596,8 +613,8 @@ func (st *store) IterateByKeys(iter StoreIterator) (err error) {
 		return
 	}
 
-	return st.ai.IterateByKeys(func(node *avlNode) error {
-		return iter(node.key, time.Unix(node.timestamp/1000000000, node.timestamp%1000000000))
+	return st.ai.IterateByKeys(func(keyGroup string, node *avlNode) error {
+		return iter(keyGroup, node.key, time.Unix(node.timestamp/1000000000, node.timestamp%1000000000))
 	})
 }
 
@@ -610,8 +627,8 @@ func (st *store) IterateByTimestamp(iter StoreIterator) (err error) {
 		return
 	}
 
-	return st.ai.IterateByTimestamp(func(node *avlNode) error {
-		return iter(node.key, time.Unix(node.timestamp/1000000000, node.timestamp%1000000000))
+	return st.ai.IterateByTimestamp(func(keyGroup string, node *avlNode) error {
+		return iter(keyGroup, node.key, time.Unix(node.timestamp/1000000000, node.timestamp%1000000000))
 	})
 }
 

@@ -31,6 +31,7 @@ type (
 		cleanupInterval  time.Duration
 		idleFileHandle   time.Duration
 		txn              *refTableTransaction
+		storeKeyInData   bool
 	}
 
 	refTableStats struct {
@@ -67,6 +68,7 @@ func newRefTable(cfg *VfsConfig, name string) (tbl *refTable, err error) {
 		accessed:        map[uint64]time.Time{},
 		cleanupInterval: time.Minute,
 		idleFileHandle:  time.Minute * 15,
+		storeKeyInData:  cfg.StoreKeyInData,
 	}
 
 	if t.cfg.ShardDurationDays == 0 {

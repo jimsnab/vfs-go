@@ -990,6 +990,21 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 	fmt.Printf("records set: %d, records retrieved: %d\n", recordNumber, retrievals)
 	s := st.(*store)
 	fmt.Printf("purges: %d, files removed: %d, keys removed: %d\n", purges, s.shardsRemoved, s.keysRemoved)
+	stats := st.Stats()
+	fmt.Printf("current keys: %d\n", stats.Keys)
+
+	cfg.StoreKeyInData = true
+	cfg.BaseName += "-copy"
+	st2, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st2.Close()
+
+	err = CopyStore(st, st2, &CopyConfig{Progress: func(index, saves int64) { fmt.Printf("index:%d saves:%d\n", index, saves) }})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestStorePurge(t *testing.T) {

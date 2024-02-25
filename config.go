@@ -11,5 +11,6 @@ type (
 		ShardRetentionDays float64  `json:"shard_retention_days"`
 		RecoveryEnabled    bool     `json:"recovery_enabled"`
 		ReferenceTables    []string `json:"reference_tables"`
+		StoreKeyInData     bool     `json:"store_key_in_data"`
 	}
 )

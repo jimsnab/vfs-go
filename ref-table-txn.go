@@ -128,11 +128,21 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord) (err err
 	for i, refs := range newArrays {
 		valueKey := valueKeyFromPos[i]
 
-		end := 4 + (len(refs) * 20)
-		flat := make([]byte, end)
-		binary.BigEndian.PutUint32(flat[0:4], uint32(end-4))
+		var pos int
+		var flat []byte
+		if table.storeKeyInData {
+			end := 24 + (len(refs) * 20)
+			flat = make([]byte, end)
+			binary.BigEndian.PutUint32(flat[0:4], uint32(end-24))
+			copy(flat[4:24], valueKey[:])
+			pos = 24
+		} else {
+			end := 4 + (len(refs) * 20)
+			flat = make([]byte, end)
+			binary.BigEndian.PutUint32(flat[0:4], uint32(end-4))
+			pos = 4
+		}
 
-		pos := 4
 		for _, ref := range refs {
 			copy(flat[pos:pos+20], ref[:])
 			pos += 20
@@ -225,8 +235,16 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 	}
 	items := recordSize / 20
 
+	arrayPos := int64(position)
+	if txn.table.storeKeyInData {
+		// skip over value key that was copied into the data file
+		arrayPos += 24
+	} else {
+		arrayPos += 4
+	}
+
 	data := make([]byte, recordSize)
-	if n, err = f.ReadAt(data, int64(position+4)); err != nil {
+	if n, err = f.ReadAt(data, arrayPos); err != nil {
 		return
 	}
 
