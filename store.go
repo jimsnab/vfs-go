@@ -58,7 +58,7 @@ type (
 		KeyGroup string
 		Key      [20]byte
 		Content  []byte
-		RefKeys  map[string]StoreReference
+		RefLists map[string][]StoreReference
 	}
 
 	StoreReference struct {
@@ -317,7 +317,7 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 	// determine which ref tables are being used and attach update instances to the transaction
 	refTableTxns := map[string]*refTableTransaction{}
 	for _, record := range records {
-		for name := range record.RefKeys {
+		for name := range record.RefLists {
 			_, exists := refTableTxns[name]
 			if !exists {
 				refTable := st.refTables[name]
@@ -383,9 +383,12 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 		// Add references.
 		//
 
-		for name, refKey := range record.RefKeys {
+		for name, refList := range record.RefLists {
 			rtxn := refTableTxns[name]
-			refRecords := []refRecord{{refKey.KeyGroup, refKey.ValueKey, record.Key}}
+			var refRecords []refRecord
+			for _, refKey := range refList {
+				refRecords = append(refRecords, refRecord{refKey.KeyGroup, refKey.ValueKey, record.Key})
+			}
 			if err = rtxn.AddReferences(refRecords); err != nil {
 				return
 			}

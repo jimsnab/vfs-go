@@ -4,7 +4,4 @@ go 1.22
 
 require golang.org/x/text v0.14.0 // indirect
 
-require (
-	github.com/jimsnab/afero v1.11.1
-	golang.org/x/sync v0.6.0
-)
+require github.com/jimsnab/afero v1.11.1

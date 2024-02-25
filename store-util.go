@@ -7,7 +7,7 @@ import (
 
 type (
 	CopyProgressFn func(index int64, saves int64)
-	ReindexFn      func(name string, content []byte) (ref *StoreReference, err error)
+	ReindexFn      func(name string, content []byte) (refs []StoreReference, err error)
 
 	CopyConfig struct {
 		Progress  CopyProgressFn
@@ -56,16 +56,16 @@ func CopyStore(source, target Store, cfg *CopyConfig) (err error) {
 
 			// recompute refs, because there's no way to determine value key group
 			// from the reference array; something to fix in v2
-			refKeys := make(map[string]StoreReference, len(src.refTables))
+			refLists := make(map[string][]StoreReference, len(src.refTables))
 			if cfg.Reindex != nil {
 				for name := range src.refTables {
-					ref, err := cfg.Reindex(name, content)
+					refs, err := cfg.Reindex(name, content)
 					if err != nil {
 						return err
 					}
 
-					if ref != nil {
-						refKeys[name] = *ref
+					if len(refs) > 0 {
+						refLists[name] = refs
 					}
 				}
 			}
@@ -74,7 +74,7 @@ func CopyStore(source, target Store, cfg *CopyConfig) (err error) {
 				KeyGroup: keyGroup,
 				Key:      node.key,
 				Content:  content,
-				RefKeys:  refKeys,
+				RefLists: refLists,
 			}
 			records = append(records, record)
 			if len(records) == 10000 {

@@ -1,6 +1,4 @@
 github.com/jimsnab/afero v1.11.1 h1:Gje7bwJ4LlKRPsdo1W3mCn/IVeTlEyUCo5PEEsVrusk=
 github.com/jimsnab/afero v1.11.1/go.mod h1:XVo02X+1FgmT+8krVghZHwLhOeP4/k8+wMSaE5ZKJ0w=
-golang.org/x/sync v0.6.0 h1:5BMeUDZ7vkXGfEr1x9B4bRcTH4lpkTkpdh0T/J+qjbQ=
-golang.org/x/sync v0.6.0/go.mod h1:Czt+wKu1gCyEFDUtn0jG5QVvpJ6rzVqr5aXyt9drQfk=
 golang.org/x/text v0.14.0 h1:ScX5w1eTa3QqT8oi6+ziP7dTV1S2+ALU0bI+0zXKWiQ=
 golang.org/x/text v0.14.0/go.mod h1:18ZOQIKpY8NJVqYksKHtTdi31H5itFRjB5/qKTNYzSU=

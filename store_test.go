@@ -151,7 +151,7 @@ func TestStoreAndGetOneReloaded(t *testing.T) {
 	valueKey := [20]byte{}
 	rand.Read(valueKey[:])
 
-	records := []StoreRecord{{kTestKeyGroup, key, data, map[string]StoreReference{"x": {keyGroupFromKey(valueKey), valueKey}}}}
+	records := []StoreRecord{{kTestKeyGroup, key, data, map[string][]StoreReference{"x": {{keyGroupFromKey(valueKey), valueKey}}}}}
 
 	if err = st1.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
@@ -226,7 +226,7 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 	valueKey1 := [20]byte{}
 	rand.Read(valueKey1[:])
 
-	records := []StoreRecord{{kTestKeyGroup, key1, data1, map[string]StoreReference{"x": {kTestKeyGroup, valueKey1}}}}
+	records := []StoreRecord{{kTestKeyGroup, key1, data1, map[string][]StoreReference{"x": {{kTestKeyGroup, valueKey1}}}}}
 
 	if err = st1.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
@@ -247,7 +247,7 @@ func TestStoreAndGetTwoReloaded(t *testing.T) {
 	valueKey2 := [20]byte{}
 	rand.Read(valueKey2[:])
 
-	records = []StoreRecord{{kTestKeyGroup, key2, data2, map[string]StoreReference{"x": {kTestKeyGroup, valueKey2}}}}
+	records = []StoreRecord{{kTestKeyGroup, key2, data2, map[string][]StoreReference{"x": {{kTestKeyGroup, valueKey2}}}}}
 
 	before := time.Now().UTC()
 	if err = st2.StoreContent(records, nil); err != nil {
@@ -381,7 +381,7 @@ func TestStoreAndGetOneRealDisk(t *testing.T) {
 	valueKey := [20]byte{}
 	rand.Read(valueKey[:])
 
-	records := []StoreRecord{{kTestKeyGroup, key, data, map[string]StoreReference{"x": {keyGroupFromKey(valueKey), valueKey}}}}
+	records := []StoreRecord{{kTestKeyGroup, key, data, map[string][]StoreReference{"x": {{keyGroupFromKey(valueKey), valueKey}}}}}
 
 	if err = st1.StoreContent(records, nil); err != nil {
 		t.Fatal(err)
@@ -912,16 +912,16 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 					rand.Read(data)
 
 					// make two random reference keys
-					refKeys := map[string]StoreReference{}
+					refLists := map[string][]StoreReference{}
 					if mrand.Intn(10) > 3 {
 						if len(allRefKeysA) == 0 || mrand.Intn(10) > 3 {
 							ref1 := [20]byte{}
 							rand.Read(ref1[:])
 							allRefKeysA = append(allRefKeysA, ref1)
-							refKeys["A"] = StoreReference{keyGroupFromKey(ref1), ref1}
+							refLists["A"] = []StoreReference{{keyGroupFromKey(ref1), ref1}}
 						} else {
 							ref1 := allRefKeysA[mrand.Intn(len(allRefKeysA))]
-							refKeys["A"] = StoreReference{keyGroupFromKey(ref1), ref1}
+							refLists["A"] = []StoreReference{{keyGroupFromKey(ref1), ref1}}
 						}
 					}
 					if mrand.Intn(10) > 3 {
@@ -929,14 +929,14 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 							ref2 := [20]byte{}
 							rand.Read(ref2[:])
 							allRefKeysB = append(allRefKeysB, ref2)
-							refKeys["B"] = StoreReference{keyGroupFromKey(ref2), ref2}
+							refLists["B"] = []StoreReference{{keyGroupFromKey(ref2), ref2}}
 						} else {
 							ref2 := allRefKeysB[mrand.Intn(len(allRefKeysB))]
-							refKeys["B"] = StoreReference{keyGroupFromKey(ref2), ref2}
+							refLists["B"] = []StoreReference{{keyGroupFromKey(ref2), ref2}}
 						}
 					}
 
-					records = append(records, StoreRecord{keyGroupFromKey(key), key, data, refKeys})
+					records = append(records, StoreRecord{keyGroupFromKey(key), key, data, refLists})
 
 					keyStr := hex.EncodeToString(key[:])
 					allKeys[recordNumber] = keyStr

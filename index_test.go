@@ -638,9 +638,9 @@ func BenchmarkStore(b *testing.B) {
 				KeyGroup: keyGroupFromKey(key),
 				Key:      key,
 				Content:  doc,
-				RefKeys: map[string]StoreReference{
-					"A": {keyGroupFromKey(ref1), ref1},
-					"B": {keyGroupFromKey(ref2), ref2},
+				RefLists: map[string][]StoreReference{
+					"A": {{keyGroupFromKey(ref1), ref1}},
+					"B": {{keyGroupFromKey(ref2), ref2}},
 				},
 			}
 
