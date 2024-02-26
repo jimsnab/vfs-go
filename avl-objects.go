@@ -8,6 +8,7 @@ import (
 	"path"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/jimsnab/afero"
 )
@@ -253,6 +254,10 @@ func (an *avlNode) CopyKeyAndValues(bn *avlNode) {
 	copy(an.key[:], bn.key[:])
 	an.shard = bn.Shard()
 	an.position = bn.Position()
+}
+
+func (an *avlNode) Epoch() time.Time {
+	return time.Unix(an.timestamp/1000000000, an.timestamp%1000000000)
 }
 
 func (an *avlNode) SetTimestamp(ts int64) {

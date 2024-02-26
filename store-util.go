@@ -76,7 +76,7 @@ func CopyStore(source, target Store, cfg *CopyConfig) (err error) {
 			}
 
 			record := StoreRecord{
-				shard:     node.shard, // retain the shard
+				shard:     dest.cfg.calcShard(node.Epoch()),
 				timestamp: node.timestamp,
 				KeyGroup:  keyGroup,
 				Key:       node.key,

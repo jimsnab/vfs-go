@@ -633,7 +633,7 @@ func (st *store) IterateByKeys(iter StoreIterator) (err error) {
 	}
 
 	return st.ai.IterateByKeys(func(keyGroup string, node *avlNode) error {
-		return iter(keyGroup, node.key, time.Unix(node.timestamp/1000000000, node.timestamp%1000000000))
+		return iter(keyGroup, node.key, node.Epoch())
 	})
 }
 
@@ -647,7 +647,7 @@ func (st *store) IterateByTimestamp(iter StoreIterator) (err error) {
 	}
 
 	return st.ai.IterateByTimestamp(func(keyGroup string, node *avlNode) error {
-		return iter(keyGroup, node.key, time.Unix(node.timestamp/1000000000, node.timestamp%1000000000))
+		return iter(keyGroup, node.key, node.Epoch())
 	})
 }
 
