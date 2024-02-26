@@ -1267,7 +1267,7 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 	}
 
 	sourceData := []testStoreKey{}
-	err = srcSt.IterateByKeys(func(keyGroup string, key [20]byte, timestamp time.Time) (err error) {
+	err = srcSt.IterateByKeys(func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error) {
 		tsk := testStoreKey{keyGroup: keyGroup, key: key, timestamp: timestamp}
 		sourceData = append(sourceData, tsk)
 		return
@@ -1280,7 +1280,7 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 	}
 
 	i := 0
-	err = destSt.IterateByKeys(func(keyGroup string, key [20]byte, timestamp time.Time) (err error) {
+	err = destSt.IterateByKeys(func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error) {
 		tsk := sourceData[i]
 		i++
 
@@ -1342,7 +1342,7 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 	}
 
 	sourceData = []testStoreKey{}
-	err = srcSt.IterateByTimestamp(func(keyGroup string, key [20]byte, timestamp time.Time) (err error) {
+	err = srcSt.IterateByTimestamp(func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error) {
 		tsk := testStoreKey{keyGroup: keyGroup, key: key, timestamp: timestamp}
 		sourceData = append(sourceData, tsk)
 		return
@@ -1355,7 +1355,7 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 	}
 
 	i = 0
-	err = destSt.IterateByTimestamp(func(keyGroup string, key [20]byte, timestamp time.Time) (err error) {
+	err = destSt.IterateByTimestamp(func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error) {
 		tsk := sourceData[i]
 		i++
 
@@ -1383,4 +1383,263 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 
 func testValueKeyGroupFromKey(valueKey [20]byte) string {
 	return string('A' + (valueKey[0] % 3))
+}
+
+func TestStoreAndGetOneUpdate(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	cfg := VfsConfig{
+		IndexDir:           ts.testDir,
+		DataDir:            ts.testDir,
+		BaseName:           "the.test",
+		Sync:               true,
+		ShardDurationDays:  0.03,
+		ShardRetentionDays: 0.06,
+		RecoveryEnabled:    true,
+	}
+
+	st, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	key := [20]byte{}
+	rand.Read(key[:])
+	datalen := mrand.Intn(16384) + 1
+	data := make([]byte, datalen)
+	rand.Read(data)
+
+	records := []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key, Content: data}}
+
+	if err = st.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(time.Second)
+	now := time.Now().UTC()
+
+	if err = st.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	var storedTs time.Time
+	err = st.IterateByTimestamp(func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error) {
+		if !storedTs.IsZero() {
+			err = errors.New("already set")
+			return
+		}
+
+		storedTs = timestamp
+		return
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	delta := storedTs.Sub(now)
+	if delta.Milliseconds() > 200 {
+		t.Fatal("timestamp not updated")
+	}
+}
+
+func TestStoreTwoAndTouchFirst(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	cfg := VfsConfig{
+		IndexDir:           ts.testDir,
+		DataDir:            ts.testDir,
+		BaseName:           "the.test",
+		Sync:               true,
+		ShardDurationDays:  0.03,
+		ShardRetentionDays: 0.06,
+		RecoveryEnabled:    true,
+	}
+
+	st, err := NewStore(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	key1 := [20]byte{}
+	rand.Read(key1[:])
+	datalen1 := mrand.Intn(16384) + 1
+	data1 := make([]byte, datalen1)
+	rand.Read(data1)
+
+	key2 := [20]byte{}
+	rand.Read(key2[:])
+	datalen2 := mrand.Intn(16384) + 1
+	data2 := make([]byte, datalen2)
+	rand.Read(data2)
+
+	records := []StoreRecord{
+		{KeyGroup: kTestKeyGroup, Key: key1, Content: data1},
+		{KeyGroup: kTestKeyGroup, Key: key2, Content: data2},
+	}
+
+	if err = st.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(time.Second)
+	now := time.Now().UTC()
+
+	records = []StoreRecord{
+		{KeyGroup: kTestKeyGroup, Key: key1, Content: data1},
+	}
+
+	if err = st.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	first := true
+	var storedTs time.Time
+	err = st.IterateByTimestamp(func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error) {
+		if first {
+			// key1 should have moved to the end
+			first = false
+			return
+		}
+
+		if !storedTs.IsZero() {
+			err = errors.New("already set")
+			return
+		}
+
+		storedTs = timestamp
+		return
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	delta := storedTs.Sub(now)
+	if delta.Milliseconds() > 200 {
+		t.Fatal("timestamp not updated")
+	}
+}
+
+func TestStoreTwoAndTouchFirstAndCopy(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	srcPath := path.Join(ts.testDir, "source")
+	err := AppFs.MkdirAll(srcPath, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srcCfg := VfsConfig{
+		IndexDir:           srcPath,
+		DataDir:            srcPath,
+		BaseName:           "the.test",
+		ShardDurationDays:  0.000004630,
+		ShardRetentionDays: 1,
+	}
+
+	fmt.Printf("shard life: %d ms\n", uint64(24*60*60*1000*srcCfg.ShardDurationDays))
+
+	st, err := NewStore(&srcCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	key1 := [20]byte{}
+	rand.Read(key1[:])
+	data1 := make([]byte, 2048)
+	rand.Read(data1)
+
+	key2 := [20]byte{}
+	rand.Read(key2[:])
+	data2 := make([]byte, 2048)
+	rand.Read(data2)
+
+	records := []StoreRecord{
+		{KeyGroup: kTestKeyGroup, Key: key1, Content: data1},
+		{KeyGroup: kTestKeyGroup, Key: key2, Content: data2},
+	}
+
+	if err = st.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(time.Second)
+	now := time.Now().UTC()
+
+	records = []StoreRecord{
+		{KeyGroup: kTestKeyGroup, Key: key1, Content: data1},
+	}
+
+	if err = st.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	destPath := path.Join(ts.testDir, "dest")
+	err = AppFs.MkdirAll(destPath, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destCfg := VfsConfig{
+		IndexDir:           destPath,
+		DataDir:            destPath,
+		BaseName:           srcCfg.BaseName,
+		ShardDurationDays:  srcCfg.ShardDurationDays,
+		ShardRetentionDays: srcCfg.ShardRetentionDays,
+	}
+
+	st2, err := NewStore(&destCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	copyCfg := CopyConfig{}
+	err = CopyStore(st, st2, &copyCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srcFiles, err := afero.ReadDir(AppFs, srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range srcFiles {
+		fmt.Printf("source: %s %d\n", file.Name(), file.Size())
+	}
+	for _, file := range srcFiles {
+		fi, err := AppFs.Stat(path.Join(destPath, file.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Printf("dest:   %s %d\n", fi.Name(), fi.Size())
+	}
+
+	first := true
+	var storedTs time.Time
+	err = st2.IterateByTimestamp(func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error) {
+		if first {
+			// key1 should have moved to the end
+			first = false
+			return
+		}
+
+		if !storedTs.IsZero() {
+			err = errors.New("already set")
+			return
+		}
+
+		storedTs = timestamp
+		return
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	delta := storedTs.Sub(now)
+	if delta.Milliseconds() > 200 {
+		t.Fatal("timestamp not updated")
+	}
 }

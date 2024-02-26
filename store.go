@@ -78,7 +78,7 @@ type (
 		ShardsRemoved uint64
 	}
 
-	StoreIterator func(keyGroup string, key [20]byte, timestamp time.Time) (err error)
+	StoreIterator func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error)
 
 	store struct {
 		docMu           sync.Mutex
@@ -633,7 +633,7 @@ func (st *store) IterateByKeys(iter StoreIterator) (err error) {
 	}
 
 	return st.ai.IterateByKeys(func(keyGroup string, node *avlNode) error {
-		return iter(keyGroup, node.key, node.Epoch())
+		return iter(keyGroup, node.key, node.shard, node.position, node.Epoch())
 	})
 }
 
@@ -647,7 +647,7 @@ func (st *store) IterateByTimestamp(iter StoreIterator) (err error) {
 	}
 
 	return st.ai.IterateByTimestamp(func(keyGroup string, node *avlNode) error {
-		return iter(keyGroup, node.key, node.Epoch())
+		return iter(keyGroup, node.key, node.shard, node.position, node.Epoch())
 	})
 }
 
