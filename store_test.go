@@ -1134,6 +1134,7 @@ func TestStorePurge(t *testing.T) {
 
 func TestStoreAndCopyMultiShard(t *testing.T) {
 	ts := testInitialize(t, false)
+	testShards := 30
 
 	srcPath := path.Join(ts.testDir, "source")
 	err := AppFs.MkdirAll(srcPath, 0755)
@@ -1158,8 +1159,6 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 	defer srcSt.Close()
 
 	priorKeys := [][20]byte{}
-
-	testShards := 3
 
 	for {
 		key := [20]byte{}
@@ -1387,6 +1386,11 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 		Progress:       func(index, compares int64) { fmt.Printf("verify: index=%d  compares=%d\n", index, compares) },
 	}
 	err = VerifyStore(srcSt, destSt, &vcfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = VerifyStoreByKeys(srcSt, destSt, &vcfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1655,6 +1659,11 @@ func TestStoreTwoAndTouchFirstAndCopy(t *testing.T) {
 	}
 
 	err = VerifyStore(st, st2, &VerifyConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = VerifyStoreByKeys(st, st2, &VerifyConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
