@@ -247,6 +247,103 @@ func VerifyStore(source, target Store, cfg *VerifyConfig) (err error) {
 	return
 }
 
+// Reads from the source store and verifies it is present in the destination. It uses key iteration,
+// so shard start and end aren't available.
+func VerifyStoreByKeys(source, target Store, cfg *VerifyConfig) (err error) {
+	if cfg == nil {
+		cfg = &VerifyConfig{}
+	}
+
+	src := source.(*store)
+	src.docMu.Lock()
+	defer src.docMu.Unlock()
+
+	dest := target.(*store)
+	dest.docMu.Lock()
+	defer dest.docMu.Unlock()
+
+	srcTxn, err := src.ai.BeginTransaction(nil)
+	if err != nil {
+		return
+	}
+
+	destTxn, err := dest.ai.BeginTransaction(nil)
+	if err != nil {
+		return
+	}
+
+	index := int64(0)
+	compared := int64(0)
+
+	nextUpdate := time.Now().Add(time.Second)
+
+	err = srcTxn.ai.IterateByKeys(func(keyGroup string, srcNode *avlNode) (err error) {
+		var tree *avlTree
+		tree, err = destTxn.ai.getTree(keyGroup)
+		if err != nil {
+			return
+		}
+
+		var destNode *avlNode
+		destNode, err = tree.Find(srcNode.key)
+		if err != nil {
+			return
+		}
+		if destNode == nil {
+			err = fmt.Errorf("did not find key %s in destination store", hex.EncodeToString(srcNode.key[:]))
+			return
+		}
+
+		if cfg.CompareContent {
+			var srcContent []byte
+			srcContent, err = src.doLoadContent(srcNode.shard, srcNode.position)
+			if err != nil {
+				return err
+			}
+
+			var destContent []byte
+			destContent, err = dest.doLoadContent(destNode.shard, destNode.position)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(srcContent, destContent) {
+				err = fmt.Errorf("content of key %s does not match", hex.EncodeToString(srcNode.key[:]))
+				return
+			}
+			compared++
+		}
+
+		index++
+		if nextUpdate.Before(time.Now()) {
+			nextUpdate = nextUpdate.Add(time.Second)
+			if cfg.Progress != nil {
+				cfg.Progress(index, compared)
+			}
+		}
+
+		return nil
+	})
+
+	if errors.Is(err, ErrIteratorAbort) {
+		err = nil
+	}
+
+	if err != nil {
+		return
+	}
+
+	if cfg.Progress != nil {
+		cfg.Progress(index, compared)
+	}
+
+	err = srcTxn.EndTransaction()
+	err2 := destTxn.EndTransaction()
+	if err == nil {
+		err = err2
+	}
+	return
+}
+
 // Iterates the source store and checks the dest index for the key. If it is missing,
 // the data is copied.
 func CopyMissing(source, target Store, cfg *CopyConfig) (err error) {
