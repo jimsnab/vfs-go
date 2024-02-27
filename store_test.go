@@ -1159,6 +1159,8 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 
 	priorKeys := [][20]byte{}
 
+	testShards := 3
+
 	for {
 		key := [20]byte{}
 		rand.Read(key[:])
@@ -1200,7 +1202,7 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 				dt3s++
 			}
 		}
-		if dt3s >= 3 {
+		if dt3s >= testShards {
 			break
 		}
 	}
@@ -1376,6 +1378,15 @@ func TestStoreAndCopyMultiShard(t *testing.T) {
 		}
 		return
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vcfg := VerifyConfig{
+		CompareContent: true,
+		Progress:       func(index, compares int64) { fmt.Printf("verify: index=%d  compares=%d\n", index, compares) },
+	}
+	err = VerifyStore(srcSt, destSt, &vcfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1641,5 +1652,10 @@ func TestStoreTwoAndTouchFirstAndCopy(t *testing.T) {
 	delta := storedTs.Sub(now)
 	if delta.Milliseconds() > 200 {
 		t.Fatal("timestamp not updated")
+	}
+
+	err = VerifyStore(st, st2, &VerifyConfig{})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

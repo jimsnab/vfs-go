@@ -1,19 +1,30 @@
 package vfs
 
 import (
+	"bytes"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 )
 
 type (
-	CopyProgressFn func(index int64, saves int64)
-	ReindexFn      func(name string, content []byte) (refs []StoreReference, err error)
+	CopyProgressFn   func(index int64, saves int64)
+	VerifyProgressFn func(index int64, comparisons int64)
+	ReindexFn        func(name string, content []byte) (refs []StoreReference, err error)
 
 	CopyConfig struct {
 		Progress  CopyProgressFn
 		FromShard uint64
 		ToShard   uint64
 		Reindex   ReindexFn
+	}
+
+	VerifyConfig struct {
+		Progress       VerifyProgressFn
+		FromShard      uint64
+		ToShard        uint64
+		CompareContent bool
 	}
 )
 
@@ -125,5 +136,113 @@ func CopyStore(source, target Store, cfg *CopyConfig) (err error) {
 	}
 
 	err = srcTxn.EndTransaction()
+	return
+}
+
+// Reads from the source store and verifies it is present in the destination.
+func VerifyStore(source, target Store, cfg *VerifyConfig) (err error) {
+	if cfg == nil {
+		cfg = &VerifyConfig{}
+	}
+
+	endShard := cfg.ToShard
+	if endShard == 0 {
+		endShard = 0xFFFFFFFFFFFFFFFF
+	}
+
+	src := source.(*store)
+	src.docMu.Lock()
+	defer src.docMu.Unlock()
+
+	dest := target.(*store)
+	dest.docMu.Lock()
+	defer dest.docMu.Unlock()
+
+	srcTxn, err := src.ai.BeginTransaction(nil)
+	if err != nil {
+		return
+	}
+
+	destTxn, err := dest.ai.BeginTransaction(nil)
+	if err != nil {
+		return
+	}
+
+	index := int64(0)
+	compared := int64(0)
+
+	nextUpdate := time.Now().Add(time.Second)
+
+	err = srcTxn.ai.IterateByTimestamp(func(keyGroup string, srcNode *avlNode) (err error) {
+		if srcNode.shard > endShard {
+			err = ErrIteratorAbort
+			return
+		}
+
+		if srcNode.shard >= cfg.FromShard {
+			var tree *avlTree
+			tree, err = destTxn.ai.getTree(keyGroup)
+			if err != nil {
+				return
+			}
+
+			var destNode *avlNode
+			destNode, err = tree.Find(srcNode.key)
+			if err != nil {
+				return
+			}
+			if destNode == nil {
+				err = fmt.Errorf("did not find key %s in destination store", hex.EncodeToString(srcNode.key[:]))
+				return
+			}
+
+			if cfg.CompareContent {
+				var srcContent []byte
+				srcContent, err = src.doLoadContent(srcNode.shard, srcNode.position)
+				if err != nil {
+					return err
+				}
+
+				var destContent []byte
+				destContent, err = dest.doLoadContent(destNode.shard, destNode.position)
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(srcContent, destContent) {
+					err = fmt.Errorf("content of key %s does not match", hex.EncodeToString(srcNode.key[:]))
+					return
+				}
+				compared++
+			}
+		}
+
+		index++
+		if nextUpdate.Before(time.Now()) {
+			nextUpdate = nextUpdate.Add(time.Second)
+			if cfg.Progress != nil {
+				cfg.Progress(index, compared)
+			}
+		}
+
+		return nil
+	})
+
+	if errors.Is(err, ErrIteratorAbort) {
+		err = nil
+	}
+
+	if err != nil {
+		return
+	}
+
+	if cfg.Progress != nil {
+		cfg.Progress(index, compared)
+	}
+
+	err = srcTxn.EndTransaction()
+	err2 := destTxn.EndTransaction()
+	if err == nil {
+		err = err2
+	}
 	return
 }
