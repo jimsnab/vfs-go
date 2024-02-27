@@ -284,7 +284,7 @@ func (st *store) StoreContent(records []StoreRecord, onComplete CommitCompleted)
 			onComplete(err)
 		}
 		st.docMu.Unlock()
-	} else if onComplete == nil {
+	} else if wrapped == nil {
 		st.docMu.Unlock()
 	}
 	return

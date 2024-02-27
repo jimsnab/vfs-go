@@ -1605,7 +1605,7 @@ func TestStoreTwoAndTouchFirstAndCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer st2.Close()
 
 	copyCfg := CopyConfig{}
 	err = CopyStore(st, st2, &copyCfg)
@@ -1657,5 +1657,88 @@ func TestStoreTwoAndTouchFirstAndCopy(t *testing.T) {
 	err = VerifyStore(st, st2, &VerifyConfig{})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStoreMergeOne(t *testing.T) {
+	ts := testInitialize(t, false)
+
+	srcPath := path.Join(ts.testDir, "source")
+	err := AppFs.MkdirAll(srcPath, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srcCfg := VfsConfig{
+		IndexDir:           srcPath,
+		DataDir:            srcPath,
+		BaseName:           "the.test",
+		ShardDurationDays:  0.000004630,
+		ShardRetentionDays: 1,
+		ReferenceTables:    []string{"mycol"},
+	}
+	fmt.Printf("shard life: %d ms\n", uint64(24*60*60*1000*srcCfg.ShardDurationDays))
+
+	srcSt, err := NewStore(&srcCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srcSt.Close()
+
+	key1 := [20]byte{}
+	rand.Read(key1[:])
+	data1 := make([]byte, 2048)
+	rand.Read(data1)
+
+	key2 := [20]byte{}
+	rand.Read(key2[:])
+	data2 := make([]byte, 2048)
+	rand.Read(data2)
+
+	records := []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key1, Content: data1}}
+
+	if err = srcSt.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	destPath := path.Join(ts.testDir, "dest")
+	err = AppFs.MkdirAll(destPath, 0755)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destCfg := VfsConfig{
+		IndexDir:           destPath,
+		DataDir:            destPath,
+		BaseName:           srcCfg.BaseName,
+		ShardDurationDays:  srcCfg.ShardDurationDays,
+		ShardRetentionDays: srcCfg.ShardRetentionDays,
+	}
+
+	destSt, err := NewStore(&destCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer destSt.Close()
+
+	records = []StoreRecord{{KeyGroup: kTestKeyGroup, Key: key2, Content: data2}}
+
+	if err = destSt.StoreContent(records, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	err = CopyMissing(srcSt, destSt, &CopyConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	destSt.IterateByKeys(func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error) {
+		fmt.Printf("%s %s %d %d %v\n", keyGroup, hex.EncodeToString(key[:]), shard, position, timestamp)
+		return nil
+	})
+
+	stats := destSt.Stats()
+	if stats.Keys != 2 {
+		t.Fatal("wrong key count")
 	}
 }

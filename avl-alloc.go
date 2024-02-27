@@ -1,7 +1,6 @@
 package vfs
 
 import (
-	"errors"
 	"time"
 )
 
@@ -25,20 +24,6 @@ func (tree *avlTree) alloc(key [20]byte, shard, position uint64, timestamp int64
 	an := avlNode{
 		tree: tree,
 		key:  key,
-	}
-
-	var newestNode *avlNode
-	if newestNode, err = tree.loadNode(tree.newestOffset); err != nil {
-		return
-	}
-	if timestamp != 0 {
-		if newestNode != nil && newestNode.timestamp >= timestamp {
-			// Setting a specific timestamp is only allowed when adding to the end of the
-			// store time list. Otherwise it requires insertion into the time list,
-			// which is inefficient, so it is unsupported.
-			err = errors.New("appending a node with a non-sequential timestamp is prohibited")
-			return
-		}
 	}
 
 	//
@@ -91,6 +76,10 @@ func (tree *avlTree) alloc(key [20]byte, shard, position uint64, timestamp int64
 	if tree.newestOffset == 0 {
 		tree.oldestOffset = offset
 	} else {
+		var newestNode *avlNode
+		if newestNode, err = tree.loadNode(tree.newestOffset); err != nil {
+			return
+		}
 		newestNode.SetNextOffset(offset)
 	}
 
@@ -186,7 +175,7 @@ func (tree *avlTree) loadNode(offset uint64) (node *avlNode, err error) {
 }
 
 // Repositions the allocation to the end of the time history.
-func (tree *avlTree) TouchAlloc(node *avlNode) (err error) {
+func (tree *avlTree) touchAlloc(node *avlNode) (err error) {
 	node.nodeDirty()
 
 	// if not already the end
@@ -224,6 +213,5 @@ func (tree *avlTree) TouchAlloc(node *avlNode) (err error) {
 		tree.setNewestOffset(node.offset)
 	}
 
-	node.timestamp = time.Now().UTC().UnixNano()
 	return
 }

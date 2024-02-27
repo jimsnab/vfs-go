@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 )
 
 type (
@@ -144,19 +145,20 @@ func (op *avlOperation) insertNode(parentOffset uint64, node *avlNode) (outOffse
 	cmp := bytes.Compare(op.key[:], node.key[:])
 
 	if cmp == 0 {
-		if op.timestamp != 0 {
-			if node.nextOffset != 0 {
-				// If a timestamp is specified, it would require finding the right spot in the
-				// time-ordered list, which is inefficient, so it is unsupported.
-				err = errors.New("updating a node with a non-sequential timestamp is prohibited")
-				return
-			}
-			node.timestamp = op.timestamp
-		}
 		op.leaf = node
 		balanced = true
 		node.SetValues(op.shard, op.position)
-		if err = node.tree.TouchAlloc(node); err != nil {
+
+		if op.timestamp == 0 {
+			node.timestamp = time.Now().UTC().UnixNano()
+		} else {
+			// may cause the time list to have older timestamps later in the time list; that is ok
+			// (newer timestamps earlier in the list would be a data purge problem)
+			node.timestamp = op.timestamp
+		}
+
+		// move the modified allocation to the end of the time list
+		if err = node.tree.touchAlloc(node); err != nil {
 			return
 		}
 	} else {

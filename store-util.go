@@ -246,3 +246,154 @@ func VerifyStore(source, target Store, cfg *VerifyConfig) (err error) {
 	}
 	return
 }
+
+// Iterates the source store and checks the dest index for the key. If it is missing,
+// the data is copied.
+func CopyMissing(source, target Store, cfg *CopyConfig) (err error) {
+	if cfg == nil {
+		cfg = &CopyConfig{}
+	}
+
+	endShard := cfg.ToShard
+	if endShard == 0 {
+		endShard = 0xFFFFFFFFFFFFFFFF
+	}
+
+	src := source.(*store)
+	src.docMu.Lock()
+	defer src.docMu.Unlock()
+
+	dest := target.(*store)
+	dest.docMu.Lock()
+	defer dest.docMu.Unlock()
+
+	srcTxn, err := src.ai.BeginTransaction(nil)
+	if err != nil {
+		return
+	}
+
+	destTxn, err := dest.ai.BeginTransaction(nil)
+	if err != nil {
+		return
+	}
+
+	index := int64(0)
+	stored := int64(0)
+	records := make([]StoreRecord, 0, 10000)
+
+	nextUpdate := time.Now().Add(time.Second)
+
+	err = srcTxn.ai.IterateByTimestamp(func(keyGroup string, srcNode *avlNode) (err error) {
+		if srcNode.shard > endShard {
+			err = ErrIteratorAbort
+			return
+		}
+
+		if srcNode.shard >= cfg.FromShard {
+			var tree *avlTree
+			tree, err = destTxn.ai.getTree(keyGroup)
+			if err != nil {
+				return
+			}
+
+			var destNode *avlNode
+			destNode, err = tree.Find(srcNode.key)
+			if err != nil {
+				return
+			}
+			if destNode == nil {
+				var srcContent []byte
+				srcContent, err = src.doLoadContent(srcNode.shard, srcNode.position)
+				if err != nil {
+					return err
+				}
+
+				// recompute refs, because there's no way to determine value key group
+				// from the reference array; something to fix in v2
+				refLists := make(map[string][]StoreReference, len(src.refTables))
+				if cfg.Reindex != nil {
+					for name := range src.refTables {
+						refs, err := cfg.Reindex(name, srcContent)
+						if err != nil {
+							return err
+						}
+
+						if len(refs) > 0 {
+							refLists[name] = refs
+						}
+					}
+				}
+
+				record := StoreRecord{
+					shard:     dest.cfg.calcShard(srcNode.Epoch()),
+					timestamp: srcNode.timestamp,
+					KeyGroup:  keyGroup,
+					Key:       srcNode.key,
+					Content:   srcContent,
+					RefLists:  refLists,
+				}
+				records = append(records, record)
+				if len(records) == 10000 {
+					err = destTxn.EndTransaction()
+					if err != nil {
+						return
+					}
+
+					err = dest.doStoreContent(records, nil)
+					if err != nil {
+						return
+					}
+					stored += int64(len(records))
+					records = records[:0]
+
+					destTxn, err = dest.ai.BeginTransaction(nil)
+					if err != nil {
+						return
+					}
+				}
+			}
+		}
+
+		index++
+		if nextUpdate.Before(time.Now()) {
+			nextUpdate = nextUpdate.Add(time.Second)
+			if cfg.Progress != nil {
+				cfg.Progress(index, stored)
+			}
+		}
+
+		return nil
+	})
+
+	if errors.Is(err, ErrIteratorAbort) {
+		err = nil
+	}
+
+	if err != nil {
+		return
+	}
+
+	if len(records) > 0 {
+		err = destTxn.EndTransaction()
+		if err != nil {
+			return
+		}
+
+		err = dest.doStoreContent(records, nil)
+		if err != nil {
+			return
+		}
+		stored += int64(len(records))
+		if cfg.Progress != nil {
+			cfg.Progress(index, stored)
+		}
+	} else {
+		err = destTxn.EndTransaction()
+	}
+
+	err2 := srcTxn.EndTransaction()
+	if err == nil {
+		err = err2
+	}
+	return
+}
