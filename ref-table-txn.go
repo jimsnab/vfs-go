@@ -13,11 +13,14 @@ import (
 
 type (
 	refTableTransaction struct {
-		mu    sync.Mutex
-		table *refTable
-		txn   *avlTransaction
+		mu                sync.Mutex
+		table             *refTable
+		txn               *avlTransaction
+		testRemovedShards map[uint64]struct{}
 	}
 )
+
+var ErrShardRemoved = errors.New("shard removed")
 
 func (table *refTable) BeginTransaction(tm *transactionManager) (txn *refTableTransaction, err error) {
 	table.mu.Lock()
@@ -55,12 +58,17 @@ func (txn *refTableTransaction) EndTransaction() (err error) {
 }
 
 func (txn *refTableTransaction) doEndTransaction() (err error) {
-	return txn.txn.EndTransaction()
+	err = txn.txn.EndTransaction()
+	txn.table.txn = nil
+	return
 }
 
 func (txn *refTableTransaction) AddReferences(refRecords []refRecord) (err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
+
+	txn.table.mu.Lock()
+	defer txn.table.mu.Unlock()
 
 	return txn.doAddReferences(refRecords, 0)
 }
@@ -68,6 +76,9 @@ func (txn *refTableTransaction) AddReferences(refRecords []refRecord) (err error
 func (txn *refTableTransaction) AddReferencesAtShard(refRecords []refRecord, refShard uint64) (err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
+
+	txn.table.mu.Lock()
+	defer txn.table.mu.Unlock()
 
 	return txn.doAddReferences(refRecords, refShard)
 }
@@ -171,7 +182,7 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord, refShard
 			return
 		}
 
-		if txn.txn.Set(keyGroups[valueKey], valueKey, shard, uint64(offset)); err != nil {
+		if _, err = txn.txn.Set(keyGroups[valueKey], valueKey, shard, uint64(offset)); err != nil {
 			return
 		}
 	}
@@ -188,6 +199,10 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord, refShard
 func (txn *refTableTransaction) RetrieveReferences(keyGroup string, valueKey [20]byte) (refs [][20]byte, err error) {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
+
+	txn.table.mu.Lock()
+	defer txn.table.mu.Unlock()
+
 	return txn.doRetrieveReferences(keyGroup, valueKey)
 }
 
@@ -212,6 +227,14 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 		if strings.HasSuffix(err.Error(), os.ErrNotExist.Error()) {
 			// valueKey indexed but shard is gone; treat as if it doesn't exist
 			err = nil
+
+			// testing only
+			if txn.testRemovedShards != nil {
+				_, removed := txn.testRemovedShards[shard]
+				if removed {
+					err = ErrShardRemoved
+				}
+			}
 		}
 		return
 	}

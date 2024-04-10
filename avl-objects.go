@@ -136,6 +136,9 @@ func newAvlTree(cfg *VfsConfig, keyGroup, extension string) (tree *avlTree, err 
 		freeNodes:    make(map[uint64]*freeNode, kFreeCacheSize),
 		cfg:          cfg,
 	}
+
+	_ = at.warningSuppressor
+
 	at.allocLru = newLruStack[*avlNode](acs, at.collectNode)
 
 	err = func() (err error) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	mrand "math/rand"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1019,6 +1020,7 @@ func TestStoreRefTablePurge(t *testing.T) {
 }
 
 func testStoreRefTablePurgeWorker(t *testing.T, ts *testState, cfg *VfsConfig) {
+	_ = ts
 
 	table, err := newRefTable(cfg, "a")
 	if err != nil {
@@ -1111,4 +1113,123 @@ func testStoreRefTablePurgeWorker(t *testing.T, ts *testState, cfg *VfsConfig) {
 		t.Fatal("too few shards removed")
 	}
 	fmt.Printf("opened: %d closed: %d removed: %d\n", stats.ShardsOpened, stats.ShardsClosed, stats.ShardsRemoved)
+}
+
+func TestRefCleanCollisions(t *testing.T) {
+	rts := refTestInitialize(t)
+	rts.cfg.StoreKeyInData = true
+
+	tbl, err := newRefTable(&rts.cfg, "refs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tbl.Close()
+
+	tbl.cleanupInterval = time.Millisecond * 5
+	tbl.idleFileHandle = time.Millisecond * 13
+	tbl.Start()
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	var ct atomic.Int32
+	var gen atomic.Uint64
+	gen.Store(1)
+
+	fn := func() {
+		defer wg.Done()
+
+		runtime.LockOSThread() // ensure concurrent execution
+
+		readBacks := [][20]byte{}
+		tick := time.Now().Add(time.Millisecond * time.Duration(mrand.Intn(30)+10))
+
+		for range 10000 {
+			g := gen.Load()
+
+			key := [20]byte{}
+			rand.Read(key[:])
+			shard := (uint64(key[0]) % 10)
+			if shard == 0 {
+				// for one of the shards, have it accessed infrequently
+				if time.Now().After(tick) {
+					tick = time.Now().Add(time.Millisecond * time.Duration(mrand.Intn(30)+10))
+				} else {
+					shard = 1
+				}
+			}
+			shard += gen.Load()
+
+			group := fmt.Sprintf("%s%d", kTestKeyGroup, ct.Load()/5000)
+
+			records := []refRecord{{group, key, key}}
+
+			var txn *refTableTransaction
+			mu.Lock()
+
+			if g != gen.Load() {
+				// An old shard may have been removed by another go routine in the
+				// purge call. Don't recreate it, because shards are supposed to
+				// have a time element that ensures an old shard is never reused.
+				// In this test the shard numbering is specifically crafted to
+				// challenge the race potential of API calls and background cleanup.
+				mu.Unlock()
+				continue
+			}
+
+			txn, err = tbl.BeginTransaction(nil)
+			if err != nil {
+				panic(err)
+			}
+			if err = txn.AddReferencesAtShard(records, shard); err != nil {
+				panic(err)
+			}
+			txn.EndTransaction()
+			mu.Unlock()
+
+			if len(readBacks) > 0 {
+				mu.Lock()
+				lookupKey := readBacks[mrand.Intn(len(readBacks))]
+				txn, err = tbl.BeginTransaction(nil)
+				if err != nil {
+					panic(err)
+				}
+				refs, err := txn.RetrieveReferences(group, lookupKey)
+				if err != nil {
+					panic(err)
+				}
+				txn.EndTransaction()
+
+				if len(refs) == 1 {
+					if !keysEqual(refs[0], lookupKey) {
+						panic("refs not equal")
+					}
+				}
+				mu.Unlock()
+			}
+
+			count := ct.Add(1)
+			if count%1000 == 0 {
+				readBacks = append(readBacks, key)
+				gen.Add(100)
+				mu.Lock()
+				err = tbl.PurgeOld(time.Now().UTC().Add(-time.Second))
+				mu.Unlock()
+				if err != nil {
+					panic(err)
+				}
+			}
+
+			if count%5000 == 0 {
+				fmt.Printf("wrote %d\n", count)
+			}
+		}
+	}
+
+	n := 3
+	wg.Add(n)
+	for range n {
+		go fn()
+	}
+	wg.Wait()
 }

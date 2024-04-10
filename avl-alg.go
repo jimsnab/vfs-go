@@ -721,6 +721,14 @@ func (tree *avlTree) isValid() (valid bool, err error) {
 	return
 }
 
+func (tree *avlTree) warningSuppressor() {
+	// supress annoying warnings from linter
+	// we want to keep some unused functions here for working on the code
+	_ = tree.countEach
+	_ = tree.testNodeString
+	_ = tree.printTree
+}
+
 // testing function
 func (tree *avlTree) countEach() (count int, err error) {
 	err = tree.IterateByKeys(func(node *avlNode) error {

@@ -81,22 +81,23 @@ type (
 	StoreIterator func(keyGroup string, key [20]byte, shard, position uint64, timestamp time.Time) (err error)
 
 	store struct {
-		docMu           sync.Mutex
-		iterMu          sync.Mutex
-		ai              *avlIndex
-		shards          map[uint64]afero.File
-		accessed        map[uint64]time.Time
-		cfg             VfsConfig
-		keysRemoved     uint64
-		shardsOpened    uint64
-		shardsClosed    uint64
-		shardsRemoved   uint64
-		refTables       map[string]*refTable
-		idleFileHandle  time.Duration
-		cleanupInterval time.Duration
-		wg              sync.WaitGroup
-		cancelFn        context.CancelFunc
-		storeKeyInData  bool
+		docMu             sync.Mutex
+		iterMu            sync.Mutex
+		ai                *avlIndex
+		shards            map[uint64]afero.File
+		accessed          map[uint64]time.Time
+		cfg               VfsConfig
+		keysRemoved       uint64
+		shardsOpened      uint64
+		shardsClosed      uint64
+		shardsRemoved     uint64
+		refTables         map[string]*refTable
+		idleFileHandle    time.Duration
+		cleanupInterval   time.Duration
+		wg                sync.WaitGroup
+		cancelFn          context.CancelFunc
+		storeKeyInData    bool
+		testRemovedShards map[uint64]struct{}
 	}
 
 	prestartCallback func(st *store)
@@ -253,6 +254,9 @@ func (st *store) purgeShards(cutoff time.Time) (err error) {
 			}
 
 			st.shardsRemoved++
+			if st.testRemovedShards != nil {
+				st.testRemovedShards[shard] = struct{}{}
+			}
 		}
 	}
 
@@ -521,6 +525,7 @@ func (st *store) RetrieveReferences(name, keyGroup string, valueKey [20]byte) (r
 
 	table := st.refTables[name]
 	if table != nil {
+		table.testRemovedShards = st.testRemovedShards
 		refKeys, err = table.RetrieveReferences(keyGroup, valueKey)
 	}
 	return

@@ -615,7 +615,8 @@ func TestStoreAndGetMany(t *testing.T) {
 					keySlice, err := hex.DecodeString(keyStr)
 					if err != nil {
 						mu.Unlock()
-						fatal.Store(&err)
+						e := errors.New("decodestring:" + err.Error())
+						fatal.Store(&e)
 						return
 					}
 					key := [20]byte{}
@@ -626,7 +627,8 @@ func TestStoreAndGetMany(t *testing.T) {
 
 					content, err := st.RetrieveContent(kTestKeyGroup, key)
 					if err != nil {
-						fatal.Store(&err)
+						e := errors.New("retrievecontent:" + err.Error())
+						fatal.Store(&e)
 						return
 					}
 
@@ -689,7 +691,8 @@ func TestStoreAndGetMany(t *testing.T) {
 				})
 
 				if err != nil {
-					fatal.Store(&err)
+					e := errors.New("storecontent:" + err.Error())
+					fatal.Store(&e)
 					return
 				}
 
@@ -743,6 +746,9 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+
+	pst := st.(*store)
+	pst.testRemovedShards = map[uint64]struct{}{}
 
 	allKeys := map[int]string{}
 	allData := map[[20]byte][]byte{}
@@ -815,7 +821,8 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 						keyStr := allKeys[idx]
 						keySlice, err = hex.DecodeString(keyStr)
 						if err != nil {
-							fatal.Store(&err)
+							e := errors.New("decodestring:" + err.Error())
+							fatal.Store(&e)
 							return
 						}
 						key := [20]byte{}
@@ -856,9 +863,14 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 
 							if expectedRef {
 								if len(refKeys) == 0 {
-									_, removed := removedRefKeys[refKey]
-									if !removed {
-										return errors.New("expected a reference key")
+									if errors.Is(failure, ErrShardRemoved) {
+										// test purged the shard; expectedRef is actually expected to be deleted
+										failure = nil
+									} else {
+										_, removed := removedRefKeys[refKey]
+										if !removed {
+											return errors.New("expected a reference key")
+										}
 									}
 								} else {
 									key := refKeys[mrand.Intn(len(refKeys))]
@@ -872,23 +884,25 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 
 					mu.Unlock()
 
-					if err != nil {
-						fatal.Store(&err)
+					if err != nil && !errors.Is(err, ErrShardRemoved) {
+						e := errors.New("retrieverefs:" + err.Error())
+						fatal.Store(&e)
 						return
 					}
 
 					if pkey != nil {
 						content, err = st.RetrieveContent(keyGroupFromKey(*pkey), *pkey)
 						if err != nil {
-							fatal.Store(&err)
+							e := errors.New("retrieve:" + err.Error())
+							fatal.Store(&e)
 							return
 						}
 					}
 
 					if !bytes.Equal(expectedContent, content) {
 						// old content is removed
-						var removed bool
-						if pkey != nil {
+						removed := errors.Is(err, ErrShardRemoved)
+						if !removed && pkey != nil {
 							_, removed = removedKeys[*pkey]
 						}
 						if len(content) > 0 || (pkey != nil && !removed) {
@@ -971,7 +985,8 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 					}
 				})
 				if err != nil {
-					fatal.Store(&err)
+					e := errors.New("storecontent:" + err.Error())
+					fatal.Store(&e)
 					return
 				}
 			}()
@@ -983,7 +998,7 @@ func TestStoreAndGetManyMultiGroup(t *testing.T) {
 			}
 
 			if _, err = st.PurgeOld(nil); err != nil {
-				t.Fatal(&err)
+				t.Fatal(err)
 				return
 			}
 			purges++

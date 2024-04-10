@@ -15,23 +15,24 @@ import (
 
 type (
 	refTable struct {
-		mu               sync.Mutex
-		name             string
-		extension        string
-		cfg              VfsConfig
-		shards           map[uint64]afero.File
-		accessed         map[uint64]time.Time
-		index            *avlIndex
-		indexKeysRemoved uint64
-		shardsOpened     uint64
-		shardsClosed     uint64
-		shardsRemoved    uint64
-		wg               sync.WaitGroup
-		cancelFn         context.CancelFunc
-		cleanupInterval  time.Duration
-		idleFileHandle   time.Duration
-		txn              *refTableTransaction
-		storeKeyInData   bool
+		mu                sync.Mutex
+		name              string
+		extension         string
+		cfg               VfsConfig
+		shards            map[uint64]afero.File
+		accessed          map[uint64]time.Time
+		index             *avlIndex
+		indexKeysRemoved  uint64
+		shardsOpened      uint64
+		shardsClosed      uint64
+		shardsRemoved     uint64
+		wg                sync.WaitGroup
+		cancelFn          context.CancelFunc
+		cleanupInterval   time.Duration
+		idleFileHandle    time.Duration
+		txn               *refTableTransaction
+		storeKeyInData    bool
+		testRemovedShards map[uint64]struct{}
 	}
 
 	refTableStats struct {
@@ -183,6 +184,10 @@ func (table *refTable) PurgeOld(cutoff time.Time) (err error) {
 
 // API task worker (caller holds the lock)
 func (table *refTable) openShard(request uint64, forRead bool) (f afero.File, shard uint64, err error) {
+	// if table.mu.TryLock() {
+	// 	panic("caller is required to lock the table")
+	// }
+
 	if request == 0 {
 		shard = table.cfg.calcShard(time.Now().UTC())
 	} else {
@@ -246,6 +251,7 @@ func (table *refTable) purgeShards(cutoff time.Time) (err error) {
 				return
 			}
 
+			delete(table.shards, shard)
 			table.shardsRemoved++
 		}
 	}
@@ -278,6 +284,7 @@ func (table *refTable) RetrieveReferences(keyGroup string, valueKey [20]byte) (r
 	if err != nil {
 		return
 	}
+	txn.testRemovedShards = table.testRemovedShards
 
 	defer func() {
 		failure := txn.doEndTransaction()
