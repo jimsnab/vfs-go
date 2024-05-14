@@ -2,7 +2,9 @@ package vfs
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -206,6 +208,14 @@ func (txn *refTableTransaction) RetrieveReferences(keyGroup string, valueKey [20
 	return txn.doRetrieveReferences(keyGroup, valueKey)
 }
 
+func (txn *refTableTransaction) printDiagnostics(keyGroup string, valueKey [20]byte, recordSize int, position uint64, shard uint64) {
+	fmt.Printf("recordSize: %d %08X\n", recordSize, recordSize)
+	fmt.Printf("keyGroup: %s\n", keyGroup)
+	fmt.Printf("valueKey: %s\n", hex.EncodeToString(valueKey[:]))
+	fmt.Printf("position: %d\n", position)
+	fmt.Printf("path: %s\n", txn.table.shardPath(shard))
+}
+
 func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [20]byte) (refs [][20]byte, err error) {
 	if txn.table.cancelFn == nil {
 		err = ErrNotStarted
@@ -242,6 +252,7 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 	hdr := make([]byte, 4)
 	var n int
 	if n, err = f.ReadAt(hdr, int64(position)); err != nil {
+		txn.printDiagnostics(keyGroup, valueKey, 0, position, shard)
 		return
 	}
 
@@ -253,14 +264,17 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 	recordSize := int(int32(binary.BigEndian.Uint32(hdr)))
 	if recordSize > 20*(1<<14) {
 		err = errors.New("reference array size too long")
+		txn.printDiagnostics(keyGroup, valueKey, recordSize, position, shard)
 		return
 	}
 	if recordSize < 0 {
 		err = errors.New("reference array was deleted")
+		txn.printDiagnostics(keyGroup, valueKey, 0, position, shard)
 		return
 	}
 	if recordSize%20 != 0 {
 		err = errors.New("reference array size not integral")
+		txn.printDiagnostics(keyGroup, valueKey, 0, position, shard)
 		return
 	}
 	items := recordSize / 20
@@ -275,11 +289,13 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 
 	data := make([]byte, recordSize)
 	if n, err = f.ReadAt(data, arrayPos); err != nil {
+		txn.printDiagnostics(keyGroup, valueKey, 0, position, shard)
 		return
 	}
 
 	if n != recordSize {
 		err = errors.New("short read for reference array")
+		txn.printDiagnostics(keyGroup, valueKey, 0, position, shard)
 		return
 	}
 
