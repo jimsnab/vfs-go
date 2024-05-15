@@ -2,6 +2,7 @@ package vfs
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	mrand "math/rand"
@@ -585,6 +586,51 @@ func TestRefAndGet5(t *testing.T) {
 	}
 }
 
+func TestRefAndGet5Capped(t *testing.T) {
+	rts := refTestInitialize(t)
+	rts.cfg.ReferenceLimit = 3
+
+	for pass := range 2 {
+		rts.cfg.StoreKeyInData = (pass == 1)
+
+		tbl, err := newRefTable(&rts.cfg, fmt.Sprintf("example-%d", pass))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tbl.Start()
+		defer tbl.Close()
+
+		for i := 1; i < len(rts.testKeys); i++ {
+			valueKey := rts.testKeys[0]
+			storeKey := rts.testKeys[i]
+
+			records := []refRecord{{kTestKeyGroup, valueKey, storeKey}}
+			if err = tbl.AddReferences(records); err != nil {
+				panic(err)
+			}
+		}
+
+		refs, err := tbl.RetrieveReferences(kTestKeyGroup, rts.testKeys[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(refs) != 3 {
+			t.Fatal("wrong length")
+		}
+
+		if !keysEqual(refs[0], rts.testKeys[1]) {
+			t.Fatal("refs[0] not equal")
+		}
+		if !keysEqual(refs[1], rts.testKeys[2]) {
+			t.Fatal("refs[1] not equal")
+		}
+		if !keysEqual(refs[2], rts.testKeys[3]) {
+			t.Fatal("refs[2] not equal")
+		}
+	}
+}
+
 func TestRefAndGet5000(t *testing.T) {
 	rts := refTestInitialize(t)
 
@@ -663,9 +709,9 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 	table.Start()
 	defer table.Close()
 
-	allValueKeys := map[int][20]byte{}
+	storedValueKeys := map[[20]byte]struct{}{}
 	allValueKeysList := [][20]byte{}
-	allStoreKeys := map[[20]byte][][20]byte{}
+	valKeyToStoreKeys := map[[20]byte][][20]byte{}
 	allStoreKeysList := [][20]byte{}
 
 	var fatal atomic.Pointer[error]
@@ -683,6 +729,22 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 	var completionsMu sync.Mutex
 	lastUpdate := time.Now()
 	largestList := 0
+	rounds := 0
+
+	//
+	// This is a load test to exercise overlap of add, append, retrieve and purge operations.
+	//
+	// There are "store keys" that represent a hypothetical main data record. In this test,
+	// store keys are just random values.
+	//
+	// And there are "value keys" that simulate extracts of main data for the purpose of value
+	// indexing. A value key is added to the store with a reference to at least one store key.
+	//
+	// A verification map is adjusted when value keys are added to the store. Upon retrieval,
+	// the value key's references are checked against the verification map.
+	//
+	// Purging activity will discard value keys.
+	//
 
 	for i := 0; i < count; i++ {
 		if fatal.Load() != nil {
@@ -690,7 +752,7 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 		}
 
 		if time.Since(lastUpdate).Seconds() >= 1 {
-			fmt.Printf("Processing %d\n", recordNumber)
+			fmt.Printf("Processing %d\n", rounds)
 			lastUpdate = time.Now()
 		}
 
@@ -718,6 +780,7 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 		}
 
 		if op == 0 || op == 1 {
+			// retrieve references of a value key
 			pending.Add(1)
 			wg.Add(1)
 			go func() {
@@ -730,88 +793,81 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 				var valueKey [20]byte
 				var shouldExist bool
 				if op == 0 || len(allValueKeysList) == 0 {
-					// try a key that won't exist
+					// try a value key that won't exist
 					buf := [20]byte{}
 					rand.Read(buf[:])
 					valueKey = buf
 					shouldExist = false
 				} else {
-					// select a key known to be stored
+					// select a value key known to be stored
 					idx := mrand.Intn(len(allValueKeysList))
 					valueKey = allValueKeysList[idx]
 					shouldExist = true
 				}
 
-				if len(valueKey) > 0 {
+				if len(valueKey) == 0 {
+					panic("value key should have been created or selected")
+				}
 
-					refs, err := table.RetrieveReferences(keyGroupFromKey(valueKey), valueKey)
-					if err != nil {
+				refs, err := table.RetrieveReferences(keyGroupFromKey(valueKey), valueKey)
+				if err != nil {
+					fatal.Store(&err)
+					return
+				}
+
+				if !shouldExist {
+					if len(refs) != 0 {
+						err = errors.New("found value key that should be missing")
+						fatal.Store(&err)
+						return
+					}
+					findMissing++
+				} else {
+					expectedStoreKeys := valKeyToStoreKeys[valueKey]
+
+					if len(refs) != len(expectedStoreKeys) {
+						table.index.IterateByKeys(func(keyGroup string, node *avlNode) error {
+							if keysEqual(node.key, valueKey) {
+								fmt.Printf("indexed:%s\n", hex.EncodeToString(node.key[:]))
+								table.RetrieveReferences(keyGroupFromKey(valueKey), valueKey)
+							}
+							return nil
+						})
+						err = fmt.Errorf("[%s] didn't find value key previously stored", hex.EncodeToString(valueKey[:]))
 						fatal.Store(&err)
 						return
 					}
 
-					if shouldExist {
-						// might have been purged - ensure it still should exist
-						shouldExist = false
-						for _, key := range allValueKeysList {
-							if !keysEqual(valueKey, key) {
-								shouldExist = true
+					if len(refs) > largestList {
+						largestList = len(refs)
+					}
+
+					found := map[[20]byte]struct{}{}
+					for _, ref := range refs {
+						for _, sk := range expectedStoreKeys {
+							if keysEqual(ref, sk) {
+								if _, prior := found[sk]; prior {
+									err = errors.New("store key array should not have dups")
+									fatal.Store(&err)
+									return
+								}
+								found[sk] = struct{}{}
 								break
 							}
 						}
 					}
-
-					if !shouldExist {
-						if len(refs) != 0 {
-							err = errors.New("found value key that should be missing")
-							fatal.Store(&err)
-							return
-						}
-						findMissing++
-					} else {
-						if len(refs) == 0 {
-							err = fmt.Errorf("[%d] didn't find value key previously stored", recordNumber)
-							fatal.Store(&err)
-							return
-						}
-
-						if len(refs) > largestList {
-							largestList = len(refs)
-						}
-
-						expectedStoreKeys := allStoreKeys[valueKey]
-						if len(expectedStoreKeys) == 0 {
-							err = errors.New("should have at least one expected store key")
-							fatal.Store(&err)
-							return
-						}
-
-						found := map[[20]byte]struct{}{}
-						for _, ref := range refs {
-							for _, sk := range expectedStoreKeys {
-								if keysEqual(ref, sk) {
-									if _, prior := found[sk]; prior {
-										err = errors.New("store key array should not have dups")
-										fatal.Store(&err)
-										return
-									}
-									found[sk] = struct{}{}
-									break
-								}
-							}
-						}
-						if len(found) != len(expectedStoreKeys) {
-							err = errors.New("didn't get the expected reference array")
-							fatal.Store(&err)
-							return
-						}
-						findLocated++
+					if len(found) != len(expectedStoreKeys) {
+						err = fmt.Errorf("got %d references to store keys, not %d", len(found), len(expectedStoreKeys))
+						fatal.Store(&err)
+						return
 					}
-
-					retrievals++
+					findLocated++
 				}
+
+				retrievals++
 			}()
 		} else if op == 2 || op == 3 {
+			// add or append a reference from value key to store key
 			wg.Add(1)
 			pending.Add(1)
 			go func() {
@@ -821,10 +877,11 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 				mu.Lock()
 
 				records := make([]refRecord, 0, 48)
-				round := recordNumber
-				recordNumber++
+				round := rounds
+				rounds++
 				newValueKeys := [][20]byte{}
 
+				// make a batch request
 				setSize := mrand.Intn(8) + 2
 				for i := 0; i < setSize; i++ {
 					// select a value key - op=2 for new value keys, op=3 for existing
@@ -851,13 +908,8 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 					records = append(records, refRecord{keyGroupFromKey(valueKey), valueKey, storeKey})
 
 					// track the expected storage
-					allValueKeys[recordNumber] = valueKey
-
-					vk := valueKey
-					list := allStoreKeys[vk]
-					if len(list) == 0 {
-						list = make([][20]byte, 0, 1)
-					}
+					storedValueKeys[valueKey] = struct{}{}
+					list := valKeyToStoreKeys[valueKey]
 
 					prior := false
 					for _, sk := range list {
@@ -869,10 +921,11 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 					}
 
 					if !prior {
-						allStoreKeys[vk] = append(allStoreKeys[vk], storeKey)
+						valKeyToStoreKeys[valueKey] = append(valKeyToStoreKeys[valueKey], storeKey)
 					}
 				}
 
+				// submit the batch request
 				var err error
 				tm := newTransactionManager(func(failure error) {
 					// ensure completion routine is called only once
@@ -929,6 +982,8 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 				t.Fatal(err)
 			}
 
+			// iterate the index to find which values remain, and then take out
+			// purged value keys from the verification map
 			survivors := map[[20]byte]struct{}{}
 			err = table.index.IterateByKeys(func(keyGroup string, node *avlNode) error {
 				survivors[node.key] = struct{}{}
@@ -938,23 +993,43 @@ func testRefAndGetManyWorker(t *testing.T, rts *refTestState, count int) {
 				t.Fatal(err)
 			}
 
-			purged := map[[20]byte]struct{}{}
-			toRemove := []int{}
+			// reference shards can get removed while a value key holds on to
+			// a reference that is not removed - fix up the verification map
+			for survivor := range survivors {
+				refs, err := table.RetrieveReferences(keyGroupFromKey(survivor), survivor)
+				if err != nil {
+					fatal.Store(&err)
+					return
+				}
+
+				verifList := valKeyToStoreKeys[survivor]
+				newList := [][20]byte{}
+				for _, verifSk := range verifList {
+					for _, ref := range refs {
+						if keysEqual(verifSk, ref) {
+							newList = append(newList, verifSk)
+						}
+					}
+				}
+
+				valKeyToStoreKeys[survivor] = newList
+			}
+
+			toRemove := [][20]byte{}
 			newValueKeyList := [][20]byte{}
-			for i, valueKey := range allValueKeys {
+			for valueKey := range storedValueKeys {
 				_, survivor := survivors[valueKey]
 				if survivor {
 					newValueKeyList = append(newValueKeyList, valueKey)
 				} else {
-					purged[valueKey] = struct{}{}
-					toRemove = append(toRemove, i)
-					delete(allStoreKeys, valueKey)
+					toRemove = append(toRemove, valueKey)
+					delete(valKeyToStoreKeys, valueKey)
 				}
 			}
 
 			allValueKeysList = newValueKeyList
-			for _, i := range toRemove {
-				delete(allValueKeys, i)
+			for _, vk := range toRemove {
+				delete(storedValueKeys, vk)
 			}
 
 			mu.Unlock()

@@ -212,18 +212,6 @@ func (table *refTable) openShard(request uint64, forRead bool) (f afero.File, sh
 	return
 }
 
-func (table *refTable) shardPath(request uint64) (name string) {
-	var shard uint64
-	if request == 0 {
-		shard = table.cfg.calcShard(time.Now().UTC())
-	} else {
-		shard = request
-	}
-
-	name = path.Join(table.cfg.DataDir, fmt.Sprintf("%s.%s.%d.%s", table.cfg.BaseName, table.name, shard, table.extension))
-	return
-}
-
 // cleanup worker - caller holds the mutex
 func (table *refTable) purgeShards(cutoff time.Time) (err error) {
 	files, err := afero.ReadDir(AppFs, table.cfg.DataDir)

@@ -14,6 +14,7 @@ type (
 		RecoveryEnabled    bool     `json:"recovery_enabled"`
 		ReferenceTables    []string `json:"reference_tables"`
 		StoreKeyInData     bool     `json:"store_key_in_data"`
+		ReferenceLimit     uint64   `json:"reference_limit"` // 0 for no limit, otherwise discards references beyond the specified limit
 	}
 )
 
