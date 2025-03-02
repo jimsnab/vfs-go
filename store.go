@@ -184,7 +184,7 @@ func (st *store) openShard(request uint64, forRead bool) (f afero.File, shard ui
 
 		f, err = createOrOpenFile(shardPath, forRead)
 		if err != nil {
-			err = fmt.Errorf("error opening shard %s: %v", shardPath, err)
+			err = fmt.Errorf("error opening shard %s forRead=%t: %v", shardPath, forRead, err)
 			return
 		}
 
@@ -449,7 +449,7 @@ func (st *store) doLoadContent(shard uint64, position uint64) (content []byte, e
 	f, _, err = st.openShard(shard, true)
 	if err != nil {
 		// key indexed but shard does not exist; treat if not indexed
-		if strings.HasSuffix(err.Error(), os.ErrNotExist.Error()) {
+		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") {
 			err = nil
 		}
 		return
