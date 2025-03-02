@@ -139,7 +139,7 @@ func newAvlTree(cfg *VfsConfig, keyGroup, extension string) (tree *avlTree, err 
 
 	_ = at.warningSuppressor
 
-	at.allocLru = newLruStack[*avlNode](acs, at.collectNode)
+	at.allocLru = newLruStack(acs, at.collectNode)
 
 	err = func() (err error) {
 		// recover from interrupted operations

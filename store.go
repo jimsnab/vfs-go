@@ -184,7 +184,7 @@ func (st *store) openShard(request uint64, forRead bool) (f afero.File, shard ui
 
 		f, err = createOrOpenFile(shardPath, forRead)
 		if err != nil {
-			err = fmt.Errorf("error opening shard %s forRead=%t: %v", shardPath, forRead, err)
+			err = fmt.Errorf("error opening store shard %s forRead=%t: %v", shardPath, forRead, err)
 			return
 		}
 

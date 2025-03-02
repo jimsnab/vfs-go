@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"strings"
 	"sync"
 
 	"github.com/jimsnab/afero"
