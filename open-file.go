@@ -19,5 +19,6 @@ func createOrOpenFile(filePath string, forRead bool) (f afero.File, err error) {
 }
 
 func isFileNotFound(err error) bool {
-	return errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") || strings.Contains(err.Error(), "stale file handle")
+	errText := err.Error()
+	return strings.Contains(errText, os.ErrNotExist.Error()) || strings.Contains(errText, "no such file or directory") || strings.Contains(errText, "stale file handle")
 }

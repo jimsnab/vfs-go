@@ -200,7 +200,7 @@ func (table *refTable) openShard(request uint64, forRead bool) (f afero.File, sh
 
 		f, err = createOrOpenFile(shardPath, forRead)
 		if err != nil {
-			err = fmt.Errorf("error opening shard %s: %v", shardPath, err)
+			err = fmt.Errorf("error opening ref shard %s: %v", shardPath, err)
 			return
 		}
 
