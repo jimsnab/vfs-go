@@ -3,6 +3,7 @@ package vfs
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -92,6 +93,7 @@ func (txn *refTableTransaction) doAddReferences(refRecords []refRecord, refShard
 
 	f, shard, err := table.openShard(refShard, false)
 	if err != nil {
+		err = fmt.Errorf("add-references: %v", err)
 		return
 	}
 
@@ -229,7 +231,7 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 	var f afero.File
 	f, _, err = txn.table.openShard(shard, true)
 	if err != nil {
-		if strings.HasSuffix(err.Error(), os.ErrNotExist.Error()) {
+		if isFileNotFound(err) {
 			// valueKey indexed but shard is gone; treat as if it doesn't exist
 			err = nil
 
@@ -240,6 +242,8 @@ func (txn *refTableTransaction) doRetrieveReferences(keyGroup string, valueKey [
 					err = ErrShardRemoved
 				}
 			}
+		} else {
+			err = fmt.Errorf("retrieve-references: %v", err)
 		}
 		return
 	}

@@ -319,6 +319,7 @@ func (st *store) doStoreContent(records []StoreRecord, onComplete CommitComplete
 			var f afero.File
 			f, shard, err = st.openShard(record.shard, false)
 			if err != nil {
+				err = fmt.Errorf("store-content: %v", err)
 				return
 			}
 			modifiedShards[record.shard] = openShard{f: f, shard: shard}
@@ -449,8 +450,10 @@ func (st *store) doLoadContent(shard uint64, position uint64) (content []byte, e
 	f, _, err = st.openShard(shard, true)
 	if err != nil {
 		// key indexed but shard does not exist; treat if not indexed
-		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file or directory") {
+		if isFileNotFound(err) {
 			err = nil
+		} else {
+			err = fmt.Errorf("load-content: %v", err)
 		}
 		return
 	}
